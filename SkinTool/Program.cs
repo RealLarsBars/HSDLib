@@ -13,6 +13,7 @@ namespace SkinTool
         const string Usage =
 @"skintool build --model <model.obj|model.zip> --dat <costume.dat> [--dat <costume.dat> ...] --out <folder|out.zip>
                [--fighter <Pl**.dat>] [--bones 41,22,...] [--scale 1.0] [--rotate 0] [--textures <costume.dat>=<folder> ...]
+               [--preview <out.png> [--anims <Pl**AJ.dat>]]
 skintool inspect <costume.dat>
 skintool check <original.dat> <skin.dat>
 skintool preview <out.png> <costume.dat> [<costume.dat> ...] [--anims <Pl**.dat> <Pl**AJ.dat>] [--bones]
@@ -24,6 +25,7 @@ build    Swaps the model into every costume given, keeping each costume's skelet
          --bones 41,22,... picks the bones to weight to; by default the fighter's bone map, if it has one.
          --textures swaps in PNGs from another folder for one costume (matched by file name).
          A .zip model (OBJ, MTL and textures) is unpacked first; an --out ending in .zip collects the costumes in one zip.
+         --preview renders the first costume, in the fighter's real animations with --anims (needs --fighter).
 inspect  Lists a costume's joints and meshes.
 check    Compares a finished skin with the original costume, as the build does.
 preview  Renders each costume in a few test poses, one row per costume.
@@ -99,7 +101,7 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
 
         static int Build(string[] args)
         {
-            string model = null, outDir = null, fighterDat = null;
+            string model = null, outDir = null, fighterDat = null, previewPng = null, animDat = null;
             var dats = new List<string>();
             var textureFolders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var opt = new AutoRig.Options();
@@ -113,6 +115,8 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                     case "--dat": dats.Add(Next()); break;
                     case "--out": outDir = Next(); break;
                     case "--fighter": fighterDat = Next(); break;
+                    case "--preview": previewPng = Next(); break;
+                    case "--anims": animDat = Next(); break;
                     case "--scale": opt.Scale = float.Parse(Next(), CultureInfo.InvariantCulture); break;
                     case "--bones": opt.Bones = Next().Split(',').Select(int.Parse).ToArray(); break;
                     case "--rotate": opt.RotateY = float.Parse(Next(), CultureInfo.InvariantCulture); break;
@@ -146,6 +150,14 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                 }
 
                 BuildCostumes(model, dats, outDir, fighterDat, textureFolders, opt);
+
+                if (previewPng != null)
+                {
+                    var previewArgs = new List<string> { "preview", previewPng, Path.Combine(outDir, Path.GetFileName(dats[0])) };
+                    if (animDat != null && fighterDat != null)
+                        previewArgs.AddRange(new[] { "--anims", fighterDat, animDat });
+                    Preview.Run(previewArgs.ToArray());
+                }
 
                 if (zipOut != null)
                 {
