@@ -24,7 +24,19 @@ namespace SkinTool
             for (int i = 0; i < list.Count; i++)
             {
                 var w = sk.Position(i);
-                Console.WriteLine($"joint {i} parent {sk.Parent[i]} at ({w.X:F2}, {w.Y:F2}, {w.Z:F2}) {list[i].Flags & (JOBJ_FLAG.CLASSICAL_SCALING | JOBJ_FLAG.MTX_SCALE_COMPENSATE)}");
+                // how far the stored bind matrix is from the one worked out from the joints
+                string bind = "";
+                if (list[i].InverseWorldTransform != null)
+                {
+                    var a = Skeleton.FromHsd(list[i].InverseWorldTransform);
+                    var b = sk.InverseBind(i);
+                    float d = 0;
+                    for (int r = 0; r < 4; r++)
+                        for (int c = 0; c < 4; c++)
+                            d = MathF.Max(d, MathF.Abs(a[r, c] - b[r, c]));
+                    bind = $" bind off by {d:G2}";
+                }
+                Console.WriteLine($"joint {i} parent {sk.Parent[i]} at ({w.X:F2}, {w.Y:F2}, {w.Z:F2}) {list[i].Flags & (JOBJ_FLAG.CLASSICAL_SCALING | JOBJ_FLAG.MTX_SCALE_COMPENSATE)}{bind}");
             }
 
             int slot = 0;

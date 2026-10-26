@@ -24,11 +24,23 @@ namespace SkinTool
             // passes of weight smoothing over the model's surface
             public int SmoothPasses = 12;
 
+            // extra passes over the body alone (not the limbs)
+            public int BodySmoothPasses = 40;
+
             // influences kept per vertex, and the smallest one kept
             public int MaxInfluences = 3;
             public float MinWeight = 0.08f;
 
-            // parts with fewer vertices than this share of the model move rigidly with one bone
+            // the bones custom skins for this fighter use (from a bone map); null works them out
+            public int[] Bones;
+
+            // the face bone from the bone map; -1 finds the head by itself
+            public int Head = -1;
+
+            // the bone map's roles (face, body, lsh, rha, ...), which say outright which bones are arms and legs
+            public Dictionary<string, int> Roles;
+
+            // parts with fewer vertices than this share of the model move as one piece with the body around them
             public float RigidPartShare = 0.15f;
         }
 
@@ -48,11 +60,33 @@ namespace SkinTool
         // detail bone -> the bone that takes its weight
         private int[] Remap;
 
+        // Body regions. Weights are only copied between matching regions, so a wide body never picks up
+        // the fighter's arms and a round belly never picks up its thighs.
+        public const int Body = 0, ArmLeft = 1, ArmRight = 2, LegLeft = 3, LegRight = 4, Other = 5;
+        private static readonly string[] RegionNames = { "body", "arm (+x)", "arm (-x)", "leg (+x)", "leg (-x)", "other" };
+
+        // per region, how fully the limb follows its own bones rather than the body (1 = fully)
+        private readonly float[] LimbFollow = { 1, 1, 1, 1, 1, 1 };
+
+        // per bone, per fighter vertex and per model position
+        private int[] BoneRegion;
+        private int[] FighterRegion;
+        public int[] ModelRegion;
+
         public static AutoRig Run(ObjModel model, FighterMesh fighter, Skeleton skeleton, Options opt)
         {
             var rig = new AutoRig();
-            rig.Remap = DetailBoneRemap(fighter, skeleton, out var merged);
-            rig.Report += $"detail bones folded into their parents: {string.Join(",", merged)}\n";
+            rig.Remap = DetailBoneRemap(fighter, skeleton, out var merged, out int head);
+            if (opt.Head >= 0)
+                head = opt.Head;
+            if (opt.Bones != null)
+            {
+                rig.Remap = ChosenBoneRemap(fighter, skeleton, opt.Bones, head);
+                rig.Report += $"bones from the fighter's bone map: {string.Join(",", opt.Bones)}\n";
+            }
+            else
+                rig.Report += $"detail bones folded into their parents: {string.Join(",", merged)}\n";
+            rig.FighterRegions(fighter, skeleton, head, opt.Roles);
             rig.Fit(model, fighter, opt);
             rig.Transfer(model, fighter, opt);
             return rig;
@@ -81,7 +115,9 @@ namespace SkinTool
             // would make it tiny, so meet in the middle. For a humanoid in a T-pose the two agree.
             float byHeight = fighterSize.Y / size.Y;
             float byWidth = fighterSize.X / size.X;
-            float scale = MathF.Sqrt(byHeight * byWidth) * opt.Scale;
+            // Never wider than the arm span though: hands past the fighter's hands swing far out
+            // whenever the fighter turns a wrist.
+            float scale = MathF.Min(MathF.Sqrt(byHeight * byWidth), byWidth) * opt.Scale;
 
             var target = new Vector3((fighter.Min.X + fighter.Max.X) / 2, fighter.Min.Y, zMid);
             var origin = new Vector3((min.X + max.X) / 2, min.Y, (min.Z + max.Z) / 2);
@@ -120,16 +156,133 @@ namespace SkinTool
                 Report += $"short legs: the model's feet follow the fighter's feet (bottom {lowerTop:P0}) and its body the hips\n";
             }
 
-            Lookup = pts.Select(p =>
+            float HeightOnFighter(float t) => fighter.Min.Y + fighterSize.Y * (t < modelCrotch
+                ? t / modelCrotch * lowerTop
+                : fighterCrotch + (t - modelCrotch) / (1 - modelCrotch) * (1 - fighterCrotch));
+
+            // the model's regions: below its crotch are legs, and whatever sticks out sideways past the
+            // body's outline (found where the outline suddenly widens) is arms
+            const int slices = 50;
+            int Slice(float t) => Math.Clamp((int)(t * slices), 0, slices - 1);
+            float cx = (min.X + max.X) / 2;
+            var reach = new float[slices];
+            foreach (var q in pts)
             {
-                var l = (p - origin) * stretch + target;
-                float t = (p.Y - min.Y) / size.Y;
-                float y = t < modelCrotch
-                    ? t / modelCrotch * lowerTop
-                    : fighterCrotch + (t - modelCrotch) / (1 - modelCrotch) * (1 - fighterCrotch);
-                l.Y = fighter.Min.Y + y * fighterSize.Y;
-                return l;
-            }).ToArray();
+                int s = Slice((q.Y - min.Y) / size.Y);
+                reach[s] = MathF.Max(reach[s], MathF.Abs(q.X - cx));
+            }
+            var bodySlices = Enumerable.Range(Slice(modelCrotch), slices - Slice(modelCrotch)).Where(s => reach[s] > 0).Select(s => reach[s]).OrderBy(r => r).ToList();
+            float typical = bodySlices.Count > 0 ? bodySlices[bodySlices.Count / 2] : size.X / 2;
+            var bodyReach = new float[slices];
+            for (int s = 0; s < slices; s++)
+            {
+                if (reach[s] <= typical * 1.35f)
+                {
+                    bodyReach[s] = reach[s];
+                    continue;
+                }
+                // arms here: use the body's outline just below or above them, whichever is narrower,
+                // since the arms' own thickness tapers into the slices next to them
+                int lo = s, hi = s;
+                while (lo > 0 && reach[lo] > typical * 1.35f) lo--;
+                while (hi < slices - 1 && reach[hi] > typical * 1.35f) hi++;
+                var sides = new[] { reach[lo], reach[hi] }.Where(r => r > 0 && r <= typical * 1.35f).ToList();
+                bodyReach[s] = sides.Count > 0 ? sides.Min() : typical;
+            }
+
+            ModelRegion = new int[pts.Length];
+            for (int i = 0; i < pts.Length; i++)
+            {
+                var q = pts[i];
+                float t = (q.Y - min.Y) / size.Y;
+                bool plus = q.X >= cx;
+                if (t < modelCrotch)
+                    ModelRegion[i] = plus ? LegLeft : LegRight;
+                else if (MathF.Abs(q.X - cx) > bodyReach[Slice(t)] * 1.05f)
+                    ModelRegion[i] = plus ? ArmLeft : ArmRight;
+                else
+                    ModelRegion[i] = Body;
+            }
+
+            // a region the fighter doesn't have (no arms to copy from) falls back to the body
+            for (int i = 0; i < pts.Length; i++)
+                if (!FighterRegion.Contains(ModelRegion[i]))
+                    ModelRegion[i] = Body;
+
+            // the fighter's body outline at each height, to line the two bodies' sides up
+            float fcx = (fighter.Min.X + fighter.Max.X) / 2;
+            var fighterReach = new float[slices];
+            for (int k = 0; k < fighter.Vertices.Count; k++)
+                if (FighterRegion[k] == Body)
+                {
+                    var q = fighter.Vertices[k].Position;
+                    int s = Slice((q.Y - fighter.Min.Y) / fighterSize.Y);
+                    fighterReach[s] = MathF.Max(fighterReach[s], MathF.Abs(q.X - fcx));
+                }
+            for (int s = 1; s < slices; s++)
+                if (fighterReach[s] <= 0) fighterReach[s] = fighterReach[s - 1];
+
+            // each arm runs from the body's side to its tip, on the model and on the fighter
+            var arm = new Dictionary<int, (float root, float tip, float y, float z, float fRoot, float fTip, float fy, float fz)>();
+            foreach (int region in new[] { ArmLeft, ArmRight })
+            {
+                var mine = Enumerable.Range(0, pts.Length).Where(i => ModelRegion[i] == region).ToList();
+                var theirs = Enumerable.Range(0, fighter.Vertices.Count).Where(k => FighterRegion[k] == region).Select(k => fighter.Vertices[k].Position).ToList();
+                if (mine.Count == 0 || theirs.Count == 0)
+                    continue;
+                var fx = theirs.Select(q => MathF.Abs(q.X - fcx)).OrderBy(x => x).ToList();
+                arm[region] = (
+                    mine.Average(i => bodyReach[Slice((pts[i].Y - min.Y) / size.Y)]),
+                    mine.Max(i => MathF.Abs(pts[i].X - cx)),
+                    mine.Average(i => pts[i].Y),
+                    mine.Average(i => pts[i].Z),
+                    fx[fx.Count / 50], fx[^1],
+                    theirs.Average(q => q.Y),
+                    theirs.Average(q => q.Z));
+            }
+
+            // An arm that sits far below or above the fighter's arm swings around the fighter's shoulder
+            // and wrist from a distance, flinging it about. The further off it is, the more it stays with
+            // the body instead.
+            foreach (var (region, a) in arm)
+            {
+                float fitted = (a.y - origin.Y) * scale + target.Y;
+                float off = MathF.Abs(fitted - a.fy) / MathF.Max(a.fTip - a.fRoot, 1e-4f);
+                LimbFollow[region] = Math.Clamp(1 - off, 0.2f, 1);
+            }
+            if (arm.Count > 0)
+                Report += $"arms {(arm.Values.First().y - origin.Y) * scale + target.Y:F1} high next to the fighter's {arm.Values.First().fy:F1}: they follow the arm bones {LimbFollow[arm.Keys.First()]:P0}\n";
+
+            Lookup = new Vector3[pts.Length];
+            for (int i = 0; i < pts.Length; i++)
+            {
+                var q = pts[i];
+                var l = (q - origin) * stretch + target;
+                float t = (q.Y - min.Y) / size.Y;
+                l.Y = HeightOnFighter(t);
+
+                int region = ModelRegion[i];
+                if (region == Body)
+                {
+                    // the body's sides go to the fighter's sides at the matching height
+                    float side = MathF.Max(bodyReach[Slice(t)], 1e-4f);
+                    float fside = fighterReach[Slice((l.Y - fighter.Min.Y) / fighterSize.Y)];
+                    l.X = fcx + (q.X - cx) / side * fside;
+                }
+                else if (arm.TryGetValue(region, out var a))
+                {
+                    // along the arm from shoulder to tip, at the same share of the way on the fighter
+                    float u = Math.Clamp((MathF.Abs(q.X - cx) - a.root) / MathF.Max(a.tip - a.root, 1e-4f), 0, 1);
+                    float k = (a.fTip - a.fRoot) / MathF.Max(a.tip - a.root, 1e-4f);
+                    l.X = fcx + MathF.Sign(q.X - cx) * (a.fRoot + u * (a.fTip - a.fRoot));
+                    l.Y = a.fy + (q.Y - a.y) * k;
+                    l.Z = a.fz + (q.Z - a.z) * k;
+                }
+                Lookup[i] = l;
+            }
+
+            Report += "model regions: " + string.Join(", ", Enumerable.Range(0, RegionNames.Length)
+                .Select(r => (r, c: ModelRegion.Count(m => m == r))).Where(e => e.c > 0).Select(e => $"{RegionNames[e.r]} {e.c}")) + "\n";
 
             Report += $"legs: the model's split at {modelCrotch:P0} of its height lines up with the top of the fighter's legs at {fighterCrotch:P0}\n";
 
@@ -217,11 +370,15 @@ namespace SkinTool
             // 1. blend the weights of the nearest fighter vertices
             var w = new float[n][];
             var fv = fighter.Vertices;
+            var pools = Enumerable.Range(0, RegionNames.Length)
+                .Select(r => Enumerable.Range(0, fv.Count).Where(k => FighterRegion[k] == r).ToArray())
+                .ToArray();
             for (int i = 0; i < n; i++)
             {
                 var p = Lookup[i];
+                int region = ModelRegion[i];
                 var nearest = new List<(float d, int idx)>(opt.Neighbours + 1);
-                for (int k = 0; k < fv.Count; k++)
+                foreach (int k in pools[region])
                 {
                     float d = Vector3.DistanceSquared(p, fv[k].Position);
                     if (nearest.Count < opt.Neighbours || d < nearest[^1].d)
@@ -233,44 +390,57 @@ namespace SkinTool
                     }
                 }
 
+                // only the region's own bones and the body's (where a limb joins it)
                 var acc = new float[boneCount];
+                var any = new float[boneCount];
                 foreach (var (d, k) in nearest)
                 {
                     float iw = 1f / (d + 1e-4f);
                     for (int b = 0; b < fv[k].Bones.Length; b++)
-                        acc[Remap[fv[k].Bones[b]]] += fv[k].Weights[b] * iw;
+                    {
+                        int bone = Remap[fv[k].Bones[b]];
+                        any[bone] += fv[k].Weights[b] * iw;
+                        if (BoneRegion[bone] == region || BoneRegion[bone] == Body)
+                            acc[bone] += fv[k].Weights[b] * iw;
+                    }
                 }
+                if (acc.Sum() <= 0)
+                    acc = any;
                 Normalize(acc);
                 w[i] = acc;
             }
 
-            // 2. smooth the body across its surface so joints bend instead of tearing
-            for (int pass = 0; pass < opt.SmoothPasses; pass++)
+            // 1b. limbs that don't line up with the fighter's partly stay with the body around them
+            for (int region = 0; region < LimbFollow.Length; region++)
             {
-                var next = new float[n][];
-                for (int i = 0; i < n; i++)
-                {
-                    if (RigidPart[i] || adj[i].Count == 0)
-                    {
-                        next[i] = w[i];
-                        continue;
-                    }
-
-                    var avg = new float[boneCount];
-                    foreach (var j in adj[i])
-                        for (int b = 0; b < boneCount; b++)
-                            avg[b] += w[j][b];
-                    float inv = 1f / adj[i].Count;
-                    var r = new float[boneCount];
+                if (LimbFollow[region] >= 1)
+                    continue;
+                var limb = Enumerable.Range(0, n).Where(i => ModelRegion[i] == region).ToList();
+                if (limb.Count == 0)
+                    continue;
+                float y = limb.Average(i => Positions[i].Y);
+                float h = Positions.Max(q => q.Y) - Positions.Min(q => q.Y);
+                var near = Enumerable.Range(0, n).Where(i => ModelRegion[i] == Body && MathF.Abs(Positions[i].Y - y) < h * 0.1f).ToList();
+                if (near.Count == 0)
+                    continue;
+                var around = new float[boneCount];
+                foreach (var i in near)
                     for (int b = 0; b < boneCount; b++)
-                        r[b] = 0.5f * w[i][b] + 0.5f * avg[b] * inv;
-                    next[i] = r;
-                }
-                w = next;
+                        around[b] += w[i][b] / near.Count;
+                float k = LimbFollow[region];
+                foreach (var i in limb)
+                    for (int b = 0; b < boneCount; b++)
+                        w[i][b] = k * w[i][b] + (1 - k) * around[b];
             }
 
-            // 3. small separate parts (claws, teeth, whiskers, eyes) move rigidly with one bone,
-            // the one the body around them mostly follows, so they stay attached to it
+            // 2. smooth the body across its surface so joints bend instead of tearing, then smooth the
+            // body region on its own some more: a different shape bending at the fighter's exact joints
+            // (waist, neck) folds like paper, a gradual blend bends like a body
+            Smooth(w, adj, boneCount, opt.SmoothPasses, i => true);
+            Smooth(w, adj, boneCount, opt.BodySmoothPasses, i => ModelRegion[i] == Body);
+
+            // 3. small separate parts (claws, teeth, whiskers, eyes) move as one piece with the
+            // body around them, so they stay attached to it
             var body = Enumerable.Range(0, n).Where(i => !RigidPart[i]).ToList();
             foreach (var part in Enumerable.Range(0, Part.Max() + 1))
             {
@@ -289,14 +459,12 @@ namespace SkinTool
                             sum[b] += w[j][b];
                 }
 
-                int best = Array.IndexOf(sum, sum.Max());
+                // the whole part takes the same blend, so it keeps its shape and stays on the body
+                Normalize(sum);
                 var c = members.Aggregate(Vector3.Zero, (a, i) => a + Positions[i]) / members.Count;
-                Report += $"part {part}: {members.Count} vertices around ({c.X:F1}, {c.Y:F1}, {c.Z:F1}) locked to bone {best}\n";
+                Report += $"part {part}: {members.Count} vertices around ({c.X:F1}, {c.Y:F1}, {c.Z:F1}) follow bone {Array.IndexOf(sum, sum.Max())}\n";
                 foreach (var i in members)
-                {
-                    w[i] = new float[boneCount];
-                    w[i][best] = 1;
-                }
+                    w[i] = (float[])sum.Clone();
             }
 
             // 4. keep the strongest few influences, as the game expects
@@ -327,8 +495,36 @@ namespace SkinTool
             }
 
             int rigid = RigidPart.Count(r => r);
-            Report += $"{Part.Max() + 1} parts, {rigid} of {n} vertices locked to one bone\n";
+            Report += $"{Part.Max() + 1} parts, {rigid} of {n} vertices in small parts that move as one piece\n";
             Report += $"bones used: {string.Join(",", Weights.SelectMany(x => x.Select(e => e.Bone)).Distinct().OrderBy(b => b))}\n";
+        }
+
+        private void Smooth(float[][] w, HashSet<int>[] adj, int boneCount, int passes, Func<int, bool> include)
+        {
+            for (int pass = 0; pass < passes; pass++)
+            {
+                var next = new float[w.Length][];
+                for (int i = 0; i < w.Length; i++)
+                {
+                    var near = adj[i].Where(include).ToList();
+                    if (RigidPart[i] || !include(i) || near.Count == 0)
+                    {
+                        next[i] = w[i];
+                        continue;
+                    }
+
+                    var avg = new float[boneCount];
+                    foreach (var j in near)
+                        for (int b = 0; b < boneCount; b++)
+                            avg[b] += w[j][b];
+                    float inv = 1f / near.Count;
+                    var r = new float[boneCount];
+                    for (int b = 0; b < boneCount; b++)
+                        r[b] = 0.5f * w[i][b] + 0.5f * avg[b] * inv;
+                    next[i] = r;
+                }
+                Array.Copy(next, w, w.Length);
+            }
         }
 
         private void WeldCoincident(HashSet<int>[] adj)
@@ -386,6 +582,84 @@ namespace SkinTool
                 RigidPart[i] = sizes[Part[i]] < n * opt.RigidPartShare;
         }
 
+        /// <summary>
+        /// Sorts the fighter's bones into body (the chain from the root up to the head), arms, legs and
+        /// other limbs (tails, capes), by where each branch off the body reaches.
+        /// </summary>
+        private void FighterRegions(FighterMesh fighter, Skeleton sk, int head, Dictionary<string, int> roles)
+        {
+            int n = sk.Joints.Count;
+            if (roles != null)
+            {
+                RolesToRegions(fighter, sk, roles);
+                return;
+            }
+
+            var body = new bool[n];
+            for (int b = Math.Max(head, 0); b >= 0; b = sk.Parent[b])
+                body[b] = true;
+
+            var branch = new int[n];
+            for (int b = 0; b < n; b++)
+            {
+                int t = b;
+                while (!body[t] && !body[sk.Parent[t]])
+                    t = sk.Parent[t];
+                branch[b] = body[t] ? -1 : t;
+            }
+
+            float height = fighter.Max.Y - fighter.Min.Y, width = fighter.Max.X - fighter.Min.X;
+            float cx = (fighter.Min.X + fighter.Max.X) / 2;
+            var byBranch = fighter.Vertices.Where(v => branch[Remap[Dominant(v)]] >= 0).GroupBy(v => branch[Remap[Dominant(v)]]);
+            var branchRegion = new Dictionary<int, int>();
+            foreach (var g in byBranch)
+            {
+                bool plus = g.Average(v => v.Position.X) >= cx;
+                if (g.Min(v => v.Position.Y) < fighter.Min.Y + height * 0.25f)
+                    branchRegion[g.Key] = plus ? LegLeft : LegRight;
+                else if (g.Max(v => MathF.Abs(v.Position.X - cx)) > width * 0.25f)
+                    branchRegion[g.Key] = plus ? ArmLeft : ArmRight;
+                else
+                    branchRegion[g.Key] = Other;
+            }
+
+            BoneRegion = new int[n];
+            for (int b = 0; b < n; b++)
+                BoneRegion[b] = branch[b] < 0 ? Body : branchRegion.GetValueOrDefault(branch[b], Other);
+            FighterRegion = fighter.Vertices.Select(v => BoneRegion[Remap[Dominant(v)]]).ToArray();
+
+            Report += "fighter regions: " + string.Join(", ", Enumerable.Range(0, RegionNames.Length)
+                .Select(r => (r, bones: Enumerable.Range(0, n).Where(b => BoneRegion[b] == r && fighter.BoneExtent.ContainsKey(b)).ToList()))
+                .Where(e => e.bones.Count > 0).Select(e => $"{RegionNames[e.r]} {string.Join(",", e.bones)}")) + "\n";
+        }
+
+        private void RolesToRegions(FighterMesh fighter, Skeleton sk, Dictionary<string, int> roles)
+        {
+            static int Region(string role)
+            {
+                string part = role.Length == 3 && (role[0] == 'l' || role[0] == 'r') ? role.Substring(1) : null;
+                if (part is "sh" or "el" or "ha")
+                    return role[0] == 'l' ? ArmLeft : ArmRight;
+                if (part is "le" or "kn" or "fb" or "ff")
+                    return role[0] == 'l' ? LegLeft : LegRight;
+                return role is "face" or "body" or "butt" or "chest" ? Body : Other;
+            }
+
+            var byBone = new Dictionary<int, int>();
+            foreach (var (role, bone) in roles)
+                byBone[bone] = Region(role);
+
+            int n = sk.Joints.Count;
+            BoneRegion = new int[n];
+            for (int b = 0; b < n; b++)
+                BoneRegion[b] = byBone.GetValueOrDefault(Remap[b], Other);
+            FighterRegion = fighter.Vertices.Select(v => BoneRegion[Remap[Dominant(v)]]).ToArray();
+
+            Report += "fighter regions from the bone map: " + string.Join(", ", Enumerable.Range(0, RegionNames.Length)
+                .Select(r => (r, bones: roles.Values.Where(b => byBone[b] == r).OrderBy(b => b).ToList()))
+                .Where(e => e.bones.Count > 0).Select(e => $"{RegionNames[e.r]} {string.Join(",", e.bones)}")) + "\n";
+        }
+
         private static int Dominant(FighterMesh.Vertex v) => v.Bones[Array.IndexOf(v.Weights, v.Weights.Max())];
 
         /// <summary>
@@ -393,7 +667,7 @@ namespace SkinTool
         /// off the head (ears, jaw, hair), which would drag a face around. Each hands its weight to
         /// the nearest ancestor that isn't one of these.
         /// </summary>
-        private static int[] DetailBoneRemap(FighterMesh fighter, Skeleton sk, out List<int> merged)
+        private static int[] DetailBoneRemap(FighterMesh fighter, Skeleton sk, out List<int> merged, out int head)
         {
             int n = sk.Joints.Count;
             float height = fighter.Max.Y - fighter.Min.Y;
@@ -404,7 +678,7 @@ namespace SkinTool
                     detail[kv.Key] = true;
 
             // the head: the bone driving the biggest area among those up in the top third
-            int head = fighter.BoneExtent.Keys
+            head = fighter.BoneExtent.Keys
                 .Where(b => sk.Position(b).Y > fighter.Min.Y + height * 0.6f)
                 .OrderByDescending(b => fighter.BoneExtent[b])
                 .DefaultIfEmpty(-1).First();
@@ -425,6 +699,52 @@ namespace SkinTool
                     merged.Add(b);
             }
             return remap;
+        }
+
+        /// <summary>
+        /// Moves every bone's weight onto the bones a bone map lists. A bone that sits on top of a
+        /// listed child (a wrist helper on the hand, a neck on the head) goes to that child; anything
+        /// else goes the way its parent goes, and bones with no listed parent (hips, tail) join the body.
+        /// </summary>
+        private static int[] ChosenBoneRemap(FighterMesh fighter, Skeleton sk, int[] bones, int head)
+        {
+            int n = sk.Joints.Count;
+            float near = (fighter.Max.Y - fighter.Min.Y) * 0.05f;
+            var allowed = bones.Where(b => b >= 0 && b < n).ToHashSet();
+
+            // the body: the listed bone on the way from the head down to the root
+            int body = -1;
+            for (int b = head; b >= 0 && body < 0; b = sk.Parent[b])
+                if (allowed.Contains(b) && b != head) body = b;
+            if (body < 0)
+                body = allowed.OrderBy(b => sk.Position(b).Y).FirstOrDefault(b => b != head);
+
+            var remap = new int[n];
+            for (int b = 0; b < n; b++)
+            {
+                if (allowed.Contains(b))
+                {
+                    remap[b] = b;
+                    continue;
+                }
+
+                int under = Enumerable.Range(0, n)
+                    .Where(c => allowed.Contains(c) && IsAncestor(sk, b, c) && Vector3.Distance(sk.Position(c), sk.Position(b)) < near)
+                    .OrderBy(c => Vector3.Distance(sk.Position(c), sk.Position(b)))
+                    .DefaultIfEmpty(-1).First();
+                // parents come before children in the joint list, so the parent's answer is already known
+                remap[b] = under >= 0 ? under : sk.Parent[b] >= 0 ? remap[sk.Parent[b]] : body;
+                if (remap[b] < 0 || !allowed.Contains(remap[b]))
+                    remap[b] = body;
+            }
+            return remap;
+        }
+
+        private static bool IsAncestor(Skeleton sk, int ancestor, int b)
+        {
+            for (int a = sk.Parent[b]; a >= 0; a = sk.Parent[a])
+                if (a == ancestor) return true;
+            return false;
         }
 
         private static void Normalize(float[] a)

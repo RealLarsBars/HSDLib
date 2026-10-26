@@ -1,9 +1,6 @@
 using HSDRaw;
 using HSDRaw.Common;
 using HSDRaw.GX;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
-using SixLabors.ImageSharp.Processing;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -64,9 +61,12 @@ namespace SkinTool
                 poses.AddRange(Animations.Load(dats[a + 1], dats[a + 2], Animations.TestPoses));
                 dats.RemoveRange(a, 3);
             }
+            // --bones colours each vertex by the bones it follows instead of its texture
+            showBones = dats.Remove("--bones");
+
             const int cell = 320;
             int views = 2;
-            using var sheet = new Image<Rgba32>(cell * poses.Count * views, cell * dats.Count, new Rgba32(40, 44, 52));
+            var sheet = new Bitmap(cell * poses.Count * views, cell * dats.Count);
 
             for (int row = 0; row < dats.Count; row++)
             {
@@ -78,13 +78,12 @@ namespace SkinTool
                 for (int p = 0; p < poses.Count; p++)
                     for (int v = 0; v < views; v++)
                     {
-                        using var img = Render(sk, tris, poses[p], v * 90f, cell);
-                        var at = new Point((p * views + v) * cell, row * cell);
-                        sheet.Mutate(x => x.DrawImage(img, at, 1f));
+                        var img = Render(sk, tris, poses[p], v * 90f, cell);
+                        sheet.Draw(img, (p * views + v) * cell, row * cell);
                     }
             }
 
-            sheet.SaveAsPng(output);
+            sheet.SavePng(output);
             Console.WriteLine($"poses: {string.Join(", ", poses.Select(p => p.Name))} (front and side each)");
             Console.WriteLine($"wrote {output}");
             return 0;
@@ -111,6 +110,33 @@ namespace SkinTool
                     [7] = new(0, 0, -110), [13] = new(0, 0, -110),
                     [22] = new(0, 0, 30), [41] = new(30, 0, -20) } },
             };
+        }
+
+        static bool showBones;
+
+        static Vector3 BoneColour(int bone)
+        {
+            // spread neighbouring bone numbers far apart around the hue circle
+            float h = (bone * 0.618034f) % 1f * 6;
+            float x = 1 - MathF.Abs(h % 2 - 1);
+            var c = (int)h switch
+            {
+                0 => new Vector3(1, x, 0),
+                1 => new Vector3(x, 1, 0),
+                2 => new Vector3(0, 1, x),
+                3 => new Vector3(0, x, 1),
+                4 => new Vector3(x, 0, 1),
+                _ => new Vector3(1, 0, x),
+            };
+            return c * 0.8f + new Vector3(0.15f);
+        }
+
+        static Vector3 BoneColour(Vert v)
+        {
+            var c = Vector3.Zero;
+            for (int i = 0; i < v.Bones.Length; i++)
+                c += BoneColour(v.Bones[i]) * v.Weights[i];
+            return c;
         }
 
         static List<Tri> Decode(Skeleton sk)
@@ -224,7 +250,7 @@ namespace SkinTool
             return skin;
         }
 
-        static Image<Rgba32> Render(Skeleton sk, List<Tri> tris, Pose pose, float yaw, int size)
+        static Bitmap Render(Skeleton sk, List<Tri> tris, Pose pose, float yaw, int size)
         {
             var skin = PosedSkinning(sk, pose);
             var posed = new Dictionary<Vert, Vector3>();
@@ -248,7 +274,7 @@ namespace SkinTool
             float scale = size / 26f;
             var center = new Vector2(size / 2f, size * 0.92f);
 
-            var img = new Image<Rgba32>(size, size, new Rgba32(40, 44, 52));
+            var img = new Bitmap(size, size);
             var depth = new float[size * size];
             Array.Fill(depth, float.MinValue);
             var light = Vector3.Normalize(new Vector3(0.4f, 0.6f, 1f));
@@ -285,13 +311,15 @@ namespace SkinTool
                         depth[idx] = z;
 
                         var col = new Vector3(0.75f, 0.75f, 0.78f);
-                        if (t.Tex != null)
+                        if (showBones)
+                            col = w0 * BoneColour(t.A) + w1 * BoneColour(t.B) + w2 * BoneColour(t.C);
+                        else if (t.Tex != null)
                         {
                             var uv = w0 * t.A.UV + w1 * t.B.UV + w2 * t.C.UV;
                             col = Sample(t.Tex, uv);
                         }
                         col *= shade;
-                        img[x, y] = new Rgba32(col.X, col.Y, col.Z);
+                        img.Set(x, y, col);
                     }
             }
 

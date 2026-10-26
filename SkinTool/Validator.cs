@@ -44,6 +44,12 @@ namespace SkinTool
             };
         }
 
+        /// <summary>Same joints, joined the same way (positions may differ).</summary>
+        public static bool SameStructure(Skeleton a, Skeleton b)
+        {
+            return a.Joints.Count == b.Joints.Count && a.Parent.SequenceEqual(b.Parent);
+        }
+
         public static bool SameSkeleton(Skeleton a, Skeleton b)
         {
             if (a.Joints.Count != b.Joints.Count)

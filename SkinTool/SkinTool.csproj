@@ -11,11 +11,12 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="SixLabors.ImageSharp" Version="4.1.3" />
+    <ProjectReference Include="..\HSDRaw\HSDRaw.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\HSDRaw\HSDRaw.csproj" />
+    <PackageReference Include="StbImageSharp" Version="2.30.16" />
+    <PackageReference Include="StbImageWriteSharp" Version="1.16.7" />
   </ItemGroup>
 
 </Project>

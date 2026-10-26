@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Numerics;
 
 namespace SkinTool
@@ -68,7 +69,7 @@ namespace SkinTool
                         material = parts.Length > 1 ? parts[1] : null;
                         break;
                     case "mtllib":
-                        model.LoadMtl(Path.Combine(model.Directory, line.Substring(parts[0].Length).Trim()));
+                        model.LoadMtl(model.Find(line.Substring(parts[0].Length).Trim()));
                         break;
                     case "f":
                         var corners = new List<Corner>();
@@ -117,13 +118,26 @@ namespace SkinTool
                 {
                     // the file name is the last token; earlier tokens can be options like -s
                     var parts = line.Split((char[])null, StringSplitOptions.RemoveEmptyEntries);
-                    var file = parts[parts.Length - 1].Replace('\\', '/');
-                    var full = Path.Combine(Directory, file);
-                    if (!File.Exists(full))
-                        full = Path.Combine(Directory, Path.GetFileName(file));
-                    Textures[current] = full;
+                    Textures[current] = Find(parts[parts.Length - 1]);
                 }
             }
+        }
+
+        /// <summary>
+        /// Finds a file the OBJ or MTL names. Models exported on Windows often name absolute paths
+        /// or use different letter case, so this falls back to the file name anywhere in the model's folder.
+        /// </summary>
+        private string Find(string name)
+        {
+            name = name.Replace('\\', '/');
+            var full = Path.Combine(Directory, name);
+            if (File.Exists(full))
+                return full;
+
+            var fileName = Path.GetFileName(name);
+            var match = System.IO.Directory.EnumerateFiles(Directory, "*", SearchOption.AllDirectories)
+                .FirstOrDefault(f => string.Equals(Path.GetFileName(f), fileName, StringComparison.OrdinalIgnoreCase));
+            return match ?? Path.Combine(Directory, fileName);
         }
 
         private static float F(string s) => float.Parse(s, CultureInfo.InvariantCulture);
