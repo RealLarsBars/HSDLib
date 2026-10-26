@@ -120,6 +120,8 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                     case "--scale": opt.Scale = float.Parse(Next(), CultureInfo.InvariantCulture); break;
                     case "--bones": opt.Bones = Next().Split(',').Select(int.Parse).ToArray(); break;
                     case "--keep-shape": opt.Conform = false; break;
+                    case "--leg-band": opt.LegBand = float.Parse(Next(), CultureInfo.InvariantCulture); break;
+                    case "--cut-legs": opt.LegCut = float.Parse(Next(), CultureInfo.InvariantCulture); break;
                     case "--rotate": opt.RotateY = float.Parse(Next(), CultureInfo.InvariantCulture); break;
                     case "--textures":
                         var kv = Next().Split('=', 2);

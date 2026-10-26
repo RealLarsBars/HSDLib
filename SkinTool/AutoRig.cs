@@ -44,9 +44,12 @@ namespace SkinTool
             // things and steps where the fighter does (needs a bone map); false keeps the model's shape
             public bool Conform = true;
 
-            // for a model with no real legs: the share of its height, from the bottom, cut into two legs
-            // and stretched down the fighter's legs (0 keeps the feet as they are)
-            public float LegCut = 0.2f;
+            // for a model with no real legs: the share of its height, from the bottom, that bends with
+            // the fighter's legs, left half with the left leg and right with the right, fading into the body
+            public float LegBand = 0.3f;
+
+            // instead, cut that share into two separate legs stretched down the fighter's (0 = don't)
+            public float LegCut = 0;
 
             // parts with fewer vertices than this share of the model move as one piece with the body around them
             public float RigidPartShare = 0.15f;
@@ -77,8 +80,9 @@ namespace SkinTool
         private readonly float[] LimbFollow = { 1, 1, 1, 1, 1, 1 };
 
         // per bone, per fighter vertex and per model position
-        // for legs made by Legs.Split: the fighter's hip height and the ground (NaN otherwise)
-        private float HipY = float.NaN, FloorY;
+        // for a model with no real legs: where its legs end at the top and the bottom, and its middle
+        // (NaN when it has real legs)
+        private float HipY = float.NaN, FloorY, MiddleX, HalfWidth, MiddleZ, HalfDepth;
 
         private int[] BoneRegion;
         private int[] FighterRegion;
@@ -167,6 +171,22 @@ namespace SkinTool
                 modelCrotch = opt.LegCut;
                 scale = MakeLegs(legSide, pts, min, size, fighter, fighterSize, zMid, skeleton, opt);
                 Report += $"no real legs: the bottom {opt.LegCut:P0} is cut into two legs down the fighter's legs, the rest sits on the hips\n";
+            }
+            else if (stubby && opt.LegBand > 0)
+            {
+                // Its body works as legs where it has to: the bottom bends with the fighter's legs, left half
+                // with the left leg, and fades into the body towards the top and the middle. Big enough to
+                // fill most of the fighter's frame, so it gets hit where the fighter does.
+                modelCrotch = opt.LegBand;
+                scale = MathF.Max(scale, 0.75f * byHeight * opt.Scale);
+                Positions = pts.Select(p => (p - origin) * scale + target).ToArray();
+                HipY = target.Y + opt.LegBand * size.Y * scale;
+                FloorY = target.Y;
+                MiddleX = target.X;
+                HalfWidth = size.X * scale / 2;
+                MiddleZ = target.Z;
+                HalfDepth = size.Z * scale / 2;
+                Report += $"no real legs: the bottom {opt.LegBand:P0} of the body bends with the fighter's legs\n";
             }
             else if (stubby)
             {
@@ -269,7 +289,11 @@ namespace SkinTool
             foreach (var (region, a) in arm)
             {
                 string side = region == ArmLeft ? "l" : "r";
-                if (opt.Conform && opt.Roles != null && opt.Roles.TryGetValue(side + "sh", out int sh) && opt.Roles.TryGetValue(side + "ha", out int ha))
+                // only an arm already near the fighter's is moved onto it: lifting a low arm up to the
+                // shoulder bends it into a W that flaps about when running
+                float fittedY = (a.y - origin.Y) * scale + target.Y;
+                bool near = MathF.Abs(fittedY - a.fy) < 0.15f * fighterSize.Y;
+                if (opt.Conform && near && opt.Roles != null && opt.Roles.TryGetValue(side + "sh", out int sh) && opt.Roles.TryGetValue(side + "ha", out int ha))
                 {
                     var chain = new List<Vector3> { skeleton.Position(sh) };
                     if (opt.Roles.TryGetValue(side + "el", out int el))
@@ -289,7 +313,7 @@ namespace SkinTool
                 Report += $"{RegionNames[region]}: {fitted:F1} high next to the fighter's {a.fy:F1}, follows the arm bones {LimbFollow[region]:P0}\n";
             }
 
-            if (opt.Conform && opt.Roles != null && legSide == null)
+            if (opt.Conform && opt.Roles != null && legSide == null && float.IsNaN(HipY))
                 ConformFeet(opt.Roles, skeleton, pts, cx, min, size, modelCrotch);
 
             Lookup = new Vector3[pts.Length];
@@ -646,11 +670,11 @@ namespace SkinTool
                         w[i][b] = k * w[i][b] + (1 - k) * around[b];
             }
 
-            // 1c. made legs: the top of each leg stays mostly with the hips, so a kick bends the leg below
-            // them instead of pulling the bottom of the body out into a sheet
+            // 1c. no real legs: the top of each leg, and the middle where the two meet, stay mostly with the
+            // hips, so a kick bends the bottom of the body instead of pulling it out into a sheet
             if (!float.IsNaN(HipY))
             {
-                float span = (HipY - FloorY) * 0.4f;
+                float span = (HipY - FloorY) * (opt.LegCut > 0 ? 0.4f : 0.6f);
                 var hips = Enumerable.Range(0, n).Where(i => ModelRegion[i] == Body && Positions[i].Y < HipY + span).ToList();
                 if (hips.Count > 0)
                 {
@@ -662,7 +686,14 @@ namespace SkinTool
                     {
                         if (ModelRegion[i] != LegLeft && ModelRegion[i] != LegRight)
                             continue;
-                        float k = 1 - 0.7f * SmoothStep(HipY - span, HipY, Positions[i].Y);
+                        float k = 1 - (opt.LegCut > 0 ? 0.7f : 1f) * SmoothStep(HipY - span, HipY, Positions[i].Y);
+                        if (opt.LegCut <= 0)
+                        {
+                            k *= SmoothStep(0, HalfWidth * 0.3f, MathF.Abs(Positions[i].X - MiddleX));
+                            // the back of a round body is far behind the hips, so a leg swinging back
+                            // would sweep it out into a sheet: it stays with the body
+                            k *= SmoothStep(-0.6f, -0.1f, (Positions[i].Z - MiddleZ) / MathF.Max(HalfDepth, 1e-4f));
+                        }
                         for (int b = 0; b < boneCount; b++)
                             w[i][b] = k * w[i][b] + (1 - k) * around[b];
                     }

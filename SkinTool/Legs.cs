@@ -92,14 +92,20 @@ namespace SkinTool
                 int normal = model.Normals.Count;
                 model.Normals.Add(Vector3.TransformNormal(new Vector3(-s, 0, 0), inverse));
                 foreach (var (a, b, t) in open)
+                {
+                    // wound like the model's own triangles, which turn counter-clockwise around their normals
+                    var face = Vector3.Cross(model.Positions[a.Position] - model.Positions[b.Position], middle - model.Positions[b.Position]);
+                    bool flip = Vector3.Dot(face, model.Normals[normal]) < 0;
+                    var (first, second) = flip ? (a, b) : (b, a);
                     model.Triangles.Add(new ObjModel.Triangle
                     {
-                        A = new ObjModel.Corner { Position = b.Position, UV = a.UV, Normal = normal },
-                        B = new ObjModel.Corner { Position = a.Position, UV = a.UV, Normal = normal },
+                        A = new ObjModel.Corner { Position = first.Position, UV = a.UV, Normal = normal },
+                        B = new ObjModel.Corner { Position = second.Position, UV = a.UV, Normal = normal },
                         C = new ObjModel.Corner { Position = center, UV = a.UV, Normal = normal },
                         Material = t.Material,
                         Object = t.Object,
                     });
+                }
             }
 
             return side.ToArray();
