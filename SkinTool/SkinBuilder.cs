@@ -128,6 +128,10 @@ namespace SkinTool
                     Mobj = CreateMaterial(group.Key, textures),
                     Pobj = generator.CreatePOBJsFromTriangleList(vertices, attrs, bones, boneWeights),
                 };
+                // drawn from both sides, like Fox's scarf: where the body bends hard (a round body
+                // working as legs) faces fold over, and one-sided faces would leave see-through holes
+                for (var pobj = dobj.Pobj; pobj != null; pobj = pobj.Next)
+                    pobj.Flags &= ~(POBJ_FLAG.CULLFRONT | POBJ_FLAG.CULLBACK);
                 real.Add(dobj);
             }
 

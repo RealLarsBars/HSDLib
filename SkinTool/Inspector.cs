@@ -100,7 +100,7 @@ namespace SkinTool
                             Console.Write($"\n      tex {t.Flags} wrap {t.WrapS}/{t.WrapT} repeat {t.RepeatS}/{t.RepeatT} scale {t.SX}/{t.SY} rot {t.RX}/{t.RY}/{t.RZ} pos {t.TX}/{t.TY} map {t.TexMapID} src {t.GXTexGenSrc} blend {t.Blending} mag {t.MagFilter} lod {(t.LOD != null)} tev {(t.TEV != null)}");
 
                     if (verbose)
-                        Console.Write($"\n      faces agreeing with their normals: {Facing(d):P0}");
+                        Console.Write($"\n      faces agreeing with their normals: {Facing(d):P0}, drawn sides {string.Join("/", d.Pobj.List.Select(p => p.Flags & (POBJ_FLAG.CULLBACK | POBJ_FLAG.CULLFRONT)).Distinct())}");
 
                     var bones = d.Pobj.List
                         .SelectMany(p => p.EnvelopeWeights ?? Array.Empty<HSD_Envelope>())
