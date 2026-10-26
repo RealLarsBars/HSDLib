@@ -1,6 +1,8 @@
 using HSDRaw;
 using HSDRaw.Common;
+using HSDRaw.GX;
 using System;
+using System.Collections.Generic;
 using System.Linq;
 
 namespace SkinTool
@@ -10,7 +12,44 @@ namespace SkinTool
     /// </summary>
     public static class Inspector
     {
-        public static int Run(string path)
+        /// <summary>
+        /// Share of triangles whose winding points the same way as their vertex normals; the game
+        /// culls back faces, so a mesh near 0% shows its inside.
+        /// </summary>
+        static float Facing(HSD_DOBJ d)
+        {
+            int agree = 0, total = 0;
+            foreach (var pobj in d.Pobj.List)
+            {
+                var dl = pobj.ToDisplayList();
+                int offset = 0;
+                foreach (var prim in dl.Primitives)
+                {
+                    var v = dl.Vertices.GetRange(offset, prim.Count);
+                    offset += prim.Count;
+                    var tris = new List<(GX_Vertex, GX_Vertex, GX_Vertex)>();
+                    if (prim.PrimitiveType == GXPrimitiveType.Triangles)
+                        for (int i = 0; i + 2 < v.Count; i += 3) tris.Add((v[i], v[i + 1], v[i + 2]));
+                    else if (prim.PrimitiveType == GXPrimitiveType.TriangleStrip)
+                        for (int i = 2; i < v.Count; i++) tris.Add(i % 2 == 0 ? (v[i - 2], v[i - 1], v[i]) : (v[i - 1], v[i - 2], v[i]));
+                    foreach (var (a, b, c) in tris)
+                    {
+                        if (a.PNMTXIDX != b.PNMTXIDX || a.PNMTXIDX != c.PNMTXIDX) continue;
+                        var pa = new System.Numerics.Vector3(a.POS.X, a.POS.Y, a.POS.Z);
+                        var pb = new System.Numerics.Vector3(b.POS.X, b.POS.Y, b.POS.Z);
+                        var pc = new System.Numerics.Vector3(c.POS.X, c.POS.Y, c.POS.Z);
+                        var n = new System.Numerics.Vector3(a.NRM.X + b.NRM.X + c.NRM.X, a.NRM.Y + b.NRM.Y + c.NRM.Y, a.NRM.Z + b.NRM.Z + c.NRM.Z);
+                        var face = System.Numerics.Vector3.Cross(pb - pa, pc - pa);
+                        if (face.LengthSquared() < 1e-12f || n.LengthSquared() < 1e-12f) continue;
+                        total++;
+                        if (System.Numerics.Vector3.Dot(face, n) > 0) agree++;
+                    }
+                }
+            }
+            return total == 0 ? float.NaN : agree / (float)total;
+        }
+
+        public static int Run(string path, bool verbose = false)
         {
             var f = new HSDRawFile(path);
             foreach (var r in f.Roots)
@@ -56,6 +95,12 @@ namespace SkinTool
                         Console.WriteLine(" empty");
                         continue;
                     }
+                    if (verbose)
+                        foreach (var t in d.Mobj?.Textures?.List ?? Enumerable.Empty<HSD_TOBJ>())
+                            Console.Write($"\n      tex {t.Flags} wrap {t.WrapS}/{t.WrapT} repeat {t.RepeatS}/{t.RepeatT} scale {t.SX}/{t.SY} rot {t.RX}/{t.RY}/{t.RZ} pos {t.TX}/{t.TY} map {t.TexMapID} src {t.GXTexGenSrc} blend {t.Blending} mag {t.MagFilter} lod {(t.LOD != null)} tev {(t.TEV != null)}");
+
+                    if (verbose)
+                        Console.Write($"\n      faces agreeing with their normals: {Facing(d):P0}");
 
                     var bones = d.Pobj.List
                         .SelectMany(p => p.EnvelopeWeights ?? Array.Empty<HSD_Envelope>())

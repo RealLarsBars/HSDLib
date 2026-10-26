@@ -40,6 +40,10 @@ namespace SkinTool
             // the bone map's roles (face, body, lsh, rha, ...), which say outright which bones are arms and legs
             public Dictionary<string, int> Roles;
 
+            // move the model's arms and feet onto the fighter's, as modders do by hand, so it holds
+            // things and steps where the fighter does (needs a bone map); false keeps the model's shape
+            public bool Conform = true;
+
             // parts with fewer vertices than this share of the model move as one piece with the body around them
             public float RigidPartShare = 0.15f;
         }
@@ -87,12 +91,12 @@ namespace SkinTool
             else
                 rig.Report += $"detail bones folded into their parents: {string.Join(",", merged)}\n";
             rig.FighterRegions(fighter, skeleton, head, opt.Roles);
-            rig.Fit(model, fighter, opt);
+            rig.Fit(model, fighter, skeleton, opt);
             rig.Transfer(model, fighter, opt);
             return rig;
         }
 
-        private void Fit(ObjModel model, FighterMesh fighter, Options opt)
+        private void Fit(ObjModel model, FighterMesh fighter, Skeleton skeleton, Options opt)
         {
             var rot = Matrix4x4.CreateRotationY(opt.RotateY * MathF.PI / 180);
             var pts = model.Positions.Select(p => Vector3.Transform(p, rot)).ToArray();
@@ -242,16 +246,33 @@ namespace SkinTool
             }
 
             // An arm that sits far below or above the fighter's arm swings around the fighter's shoulder
-            // and wrist from a distance, flinging it about. The further off it is, the more it stays with
-            // the body instead.
+            // and wrist from a distance, flinging it about. With a bone map the arm is moved onto the
+            // fighter's arm instead; without one, the further off it is, the more it stays with the body.
             foreach (var (region, a) in arm)
             {
+                string side = region == ArmLeft ? "l" : "r";
+                if (opt.Conform && opt.Roles != null && opt.Roles.TryGetValue(side + "sh", out int sh) && opt.Roles.TryGetValue(side + "ha", out int ha))
+                {
+                    var chain = new List<Vector3> { skeleton.Position(sh) };
+                    if (opt.Roles.TryGetValue(side + "el", out int el))
+                        chain.Add(skeleton.Position(el));
+                    chain.Add(skeleton.Position(ha));
+                    // past the wrist to the fingertips, as far as the fighter's arm reaches
+                    float past = MathF.Max(a.fTip - MathF.Abs(chain[^1].X - fcx), 0);
+                    var dir = Vector3.Normalize(chain[^1] - chain[^2]);
+                    chain.Add(chain[^1] + dir * (past / MathF.Max(MathF.Abs(dir.X), 0.3f)));
+                    ConformArm(region, chain, pts, cx, (q, s) => bodyReach[s], Slice, min, size, origin, scale, target);
+                    Report += $"{RegionNames[region]}: moved onto the fighter's arm\n";
+                    continue;
+                }
                 float fitted = (a.y - origin.Y) * scale + target.Y;
                 float off = MathF.Abs(fitted - a.fy) / MathF.Max(a.fTip - a.fRoot, 1e-4f);
                 LimbFollow[region] = Math.Clamp(1 - off, 0.2f, 1);
+                Report += $"{RegionNames[region]}: {fitted:F1} high next to the fighter's {a.fy:F1}, follows the arm bones {LimbFollow[region]:P0}\n";
             }
-            if (arm.Count > 0)
-                Report += $"arms {(arm.Values.First().y - origin.Y) * scale + target.Y:F1} high next to the fighter's {arm.Values.First().fy:F1}: they follow the arm bones {LimbFollow[arm.Keys.First()]:P0}\n";
+
+            if (opt.Conform && opt.Roles != null)
+                ConformFeet(opt.Roles, skeleton, pts, cx, min, size, modelCrotch);
 
             Lookup = new Vector3[pts.Length];
             for (int i = 0; i < pts.Length; i++)
@@ -287,6 +308,109 @@ namespace SkinTool
             Report += $"legs: the model's split at {modelCrotch:P0} of its height lines up with the top of the fighter's legs at {fighterCrotch:P0}\n";
 
             Report += $"fitted size x{scale:F2}: {size.Y * scale:F1} tall next to the fighter's {fighterSize.Y:F1}, {size.X * scale:F1} wide next to its {fighterSize.X:F1}\n";
+        }
+
+        /// <summary>
+        /// Moves an arm onto the fighter's arm: each point keeps its distance from the arm's middle line,
+        /// and its place along the arm becomes the same share of the way along the fighter's
+        /// shoulder-elbow-hand-fingertip line. Near the shoulder it blends back into the body.
+        /// </summary>
+        private void ConformArm(int region, List<Vector3> chain, Vector3[] pts, float cx, Func<Vector3, int, float> bodyReach,
+            Func<float, int> slice, Vector3 min, Vector3 size, Vector3 origin, float scale, Vector3 target)
+        {
+            var members = Enumerable.Range(0, pts.Length).Where(i => ModelRegion[i] == region).ToList();
+            float U(int i)
+            {
+                float root = bodyReach(pts[i], slice((pts[i].Y - min.Y) / size.Y));
+                return Math.Clamp((MathF.Abs(pts[i].X - cx) - root) / MathF.Max(tipOf(), 1e-4f), 0, 1);
+            }
+            float tipCache = -1;
+            float tipOf()
+            {
+                if (tipCache < 0)
+                    tipCache = members.Max(i => MathF.Abs(pts[i].X - cx) - bodyReach(pts[i], slice((pts[i].Y - min.Y) / size.Y)));
+                return tipCache;
+            }
+
+            // the model arm's middle line, in a few steps along it
+            const int bins = 8;
+            var sum = new Vector3[bins];
+            var count = new int[bins];
+            foreach (var i in members)
+            {
+                int b = Math.Min(bins - 1, (int)(U(i) * bins));
+                sum[b] += Positions[i];
+                count[b]++;
+            }
+            var middle = new Vector3[bins];
+            for (int b = 0; b < bins; b++)
+                middle[b] = count[b] > 0 ? sum[b] / count[b] : Vector3.Zero;
+            for (int b = 1; b < bins; b++)
+                if (count[b] == 0) middle[b] = middle[b - 1];
+            for (int b = bins - 2; b >= 0; b--)
+                if (count[b] == 0) middle[b] = middle[b + 1];
+
+            var lengths = new List<float> { 0 };
+            for (int k = 1; k < chain.Count; k++)
+                lengths.Add(lengths[^1] + Vector3.Distance(chain[k - 1], chain[k]));
+            Vector3 Along(float u)
+            {
+                float d = u * lengths[^1];
+                for (int k = 1; k < chain.Count; k++)
+                    if (d <= lengths[k] || k == chain.Count - 1)
+                        return Vector3.Lerp(chain[k - 1], chain[k], Math.Clamp((d - lengths[k - 1]) / MathF.Max(lengths[k] - lengths[k - 1], 1e-4f), 0, 1));
+                return chain[^1];
+            }
+
+            foreach (var i in members)
+            {
+                float u = U(i);
+                float fb = u * bins - 0.5f;
+                int b0 = Math.Clamp((int)MathF.Floor(fb), 0, bins - 1), b1 = Math.Min(bins - 1, b0 + 1);
+                var mid = Vector3.Lerp(middle[b0], middle[b1], Math.Clamp(fb - b0, 0, 1));
+                var offset = Positions[i] - mid;
+                offset.X = 0; // the arm's length is the fighter's now; keep only its thickness
+                var moved = Along(u) + offset;
+                float blend = SmoothStep(0, 0.35f, u);
+                Positions[i] = Vector3.Lerp(Positions[i], moved, blend);
+            }
+        }
+
+        /// <summary>
+        /// Slides each foot sideways and forwards onto the fighter's foot, fading out up the body.
+        /// </summary>
+        private void ConformFeet(Dictionary<string, int> roles, Skeleton sk, Vector3[] pts, float cx, Vector3 min, Vector3 size, float crotch)
+        {
+            foreach (var side in new[] { "l", "r" })
+            {
+                var feet = new[] { "fb", "ff" }.Where(r => roles.ContainsKey(side + r)).Select(r => sk.Position(roles[side + r])).ToList();
+                int region = side == "l" ? LegLeft : LegRight;
+                var members = Enumerable.Range(0, pts.Length).Where(i => ModelRegion[i] == region).ToList();
+                if (feet.Count == 0 || members.Count == 0)
+                    continue;
+
+                var theirs = feet.Aggregate(Vector3.Zero, (a, q) => a + q) / feet.Count;
+                var mine = members.Aggregate(Vector3.Zero, (a, i) => a + Positions[i]) / members.Count;
+                var shift = new Vector3(theirs.X - mine.X, 0, theirs.Z - mine.Z);
+                float reachX = MathF.Abs(mine.X - Positions.Average(q => q.X));
+
+                for (int i = 0; i < pts.Length; i++)
+                {
+                    float t = (pts[i].Y - min.Y) / size.Y;
+                    bool onSide = side == "l" ? pts[i].X >= cx : pts[i].X < cx;
+                    if (!onSide || t > crotch + 0.15f)
+                        continue;
+                    float up = t <= crotch ? 1 : 1 - (t - crotch) / 0.15f;
+                    float across = ModelRegion[i] == region ? 1 : Math.Clamp(MathF.Abs(pts[i].X - cx) * (Positions[i].X - cx == 0 ? 0 : 1) / MathF.Max(reachX, 1e-4f), 0, 1);
+                    Positions[i] += shift * up * across;
+                }
+            }
+        }
+
+        private static float SmoothStep(float a, float b, float x)
+        {
+            float t = Math.Clamp((x - a) / (b - a), 0, 1);
+            return t * t * (3 - 2 * t);
         }
 
         /// <summary>

@@ -45,7 +45,7 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                 switch (args[0])
                 {
                     case "build": return Build(args.Skip(1).ToArray());
-                    case "inspect": return Inspector.Run(args[1]);
+                    case "inspect": return Inspector.Run(args[1], args.Contains("--textures"));
                     case "preview": return Preview.Run(args);
                     case "slots": return Slots.Dump(args);
                     case "bonemap": return BoneMaps.Dump(args[1]);

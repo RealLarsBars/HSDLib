@@ -89,8 +89,9 @@ namespace SkinTool
 
                 foreach (var tri in group)
                 {
-                    // GX culls the opposite winding from OBJ
-                    foreach (var c in new[] { tri.A, tri.C, tri.B })
+                    // same winding as OBJ: the generator's strips come out facing the way the game draws
+                    // (checked against Fox's own meshes with inspect --textures)
+                    foreach (var c in new[] { tri.A, tri.B, tri.C })
                     {
                         var inf = weights[c.Position];
                         var pos = positions[c.Position];

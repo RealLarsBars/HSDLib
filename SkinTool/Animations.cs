@@ -21,6 +21,7 @@ namespace SkinTool
             ("Run", 0.3f),
             ("SquatWait", 0f),
             ("AttackS4", 0.4f),
+            ("AttackHi3", 0.3f),
             ("AttackHi4", 0.35f),
             ("AttackAirB", 0.3f),
             ("DamageFlyHi", 0.2f),

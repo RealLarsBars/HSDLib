@@ -114,6 +114,9 @@ namespace SkinTool
 
         static bool showBones;
 
+        // the screen winding of a back face, checked against Fox's own meshes
+        const float CullSign = -1;
+
         static Vector3 BoneColour(int bone)
         {
             // spread neighbouring bone numbers far apart around the hue circle
@@ -204,8 +207,11 @@ namespace SkinTool
                                         tris.Add(new Tri { A = conv[i], B = conv[i + 1], C = conv[i + 2], Tex = tex });
                                     break;
                                 case GXPrimitiveType.TriangleStrip:
+                                    // every other strip triangle runs the other way round
                                     for (int i = 2; i < conv.Count; i++)
-                                        tris.Add(new Tri { A = conv[i - 2], B = conv[i - 1], C = conv[i], Tex = tex });
+                                        tris.Add(i % 2 == 0
+                                            ? new Tri { A = conv[i - 2], B = conv[i - 1], C = conv[i], Tex = tex }
+                                            : new Tri { A = conv[i - 1], B = conv[i - 2], C = conv[i], Tex = tex });
                                     break;
                                 case GXPrimitiveType.Quads:
                                     for (int i = 0; i + 3 < conv.Count; i += 4)
@@ -298,6 +304,8 @@ namespace SkinTool
                 int maxY = Math.Min(size - 1, (int)MathF.Ceiling(MathF.Max(sa.Y, MathF.Max(sb.Y, sc.Y))));
                 float area = Edge(sa, sb, sc);
                 if (MathF.Abs(area) < 1e-6f) continue;
+                // the game doesn't draw back faces, so neither does the preview (an inside-out mesh shows)
+                if (area * CullSign > 0) continue;
 
                 for (int y = minY; y <= maxY; y++)
                     for (int x = minX; x <= maxX; x++)
