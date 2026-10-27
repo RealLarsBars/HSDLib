@@ -18,6 +18,9 @@ namespace SkinTool
             // stretch the fitted model sideways or upwards only (from the floor, about its middle)
             public float Width = 1, Height = 1;
 
+            // moves the fitted model up (or down, below 0), as a share of the fighter's height
+            public float Lift = 0;
+
             // degrees to turn the model around the vertical axis before fitting
             public float RotateY = 0;
 
@@ -145,7 +148,7 @@ namespace SkinTool
             // whenever the fighter turns a wrist.
             float scale = MathF.Min(MathF.Sqrt(byHeight * byWidth), byWidth) * opt.Scale;
 
-            var target = new Vector3((fighter.Min.X + fighter.Max.X) / 2, fighter.Min.Y, zMid);
+            var target = new Vector3((fighter.Min.X + fighter.Max.X) / 2, fighter.Min.Y + opt.Lift * fighterSize.Y, zMid);
             var origin = new Vector3((min.X + max.X) / 2, min.Y, (min.Z + max.Z) / 2);
 
             var grow = new Vector3(opt.Width, opt.Height, 1);
@@ -454,7 +457,7 @@ namespace SkinTool
             float fcx = (fighter.Min.X + fighter.Max.X) / 2;
 
             var origin = new Vector3(cx, cutY, cz);
-            var target = new Vector3(fcx, hipY, zMid);
+            var target = new Vector3(fcx, hipY + opt.Lift * fighterSize.Y, zMid);
             Positions = pts.Select(q => (q - origin) * scale * new Vector3(opt.Width, opt.Height, 1) + target).ToArray();
 
             float radius = 0.1f * fighterSize.Y * opt.Scale;
