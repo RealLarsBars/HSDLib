@@ -231,6 +231,7 @@ namespace SkinTool
             var bodySlices = Enumerable.Range(Slice(modelCrotch), slices - Slice(modelCrotch)).Where(s => reach[s] > 0).Select(s => reach[s]).OrderBy(r => r).ToList();
             float typical = bodySlices.Count > 0 ? bodySlices[bodySlices.Count / 2] : size.X / 2;
             var bodyReach = new float[slices];
+            int top = Enumerable.Range(0, slices).Last(s => reach[s] > 0);
             for (int s = 0; s < slices; s++)
             {
                 if (reach[s] <= typical * 1.35f)
@@ -238,11 +239,20 @@ namespace SkinTool
                     bodyReach[s] = reach[s];
                     continue;
                 }
-                // arms here: use the body's outline just below or above them, whichever is narrower,
-                // since the arms' own thickness tapers into the slices next to them
                 int lo = s, hi = s;
                 while (lo > 0 && reach[lo] > typical * 1.35f) lo--;
                 while (hi < slices - 1 && reach[hi] > typical * 1.35f) hi++;
+                // a tall wide stretch up at the top is a big head (Squidward), not arms: arms held out
+                // are only an arm's thickness tall, and arms held lower start at the shoulders
+                int runTop = reach[hi] > typical * 1.35f ? hi : hi - 1;
+                int runBottom = reach[lo] > typical * 1.35f ? lo : lo + 1;
+                if (runTop >= top - slices / 5 && runTop - runBottom + 1 >= 4)
+                {
+                    bodyReach[s] = reach[s];
+                    continue;
+                }
+                // arms here: use the body's outline just below or above them, whichever is narrower,
+                // since the arms' own thickness tapers into the slices next to them
                 var sides = new[] { reach[lo], reach[hi] }.Where(r => r > 0 && r <= typical * 1.35f).ToList();
                 bodyReach[s] = sides.Count > 0 ? sides.Min() : typical;
             }
