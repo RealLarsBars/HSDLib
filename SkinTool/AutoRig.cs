@@ -47,6 +47,8 @@ namespace SkinTool
             public bool StretchyFeet;
             // the fighter wears a long dress over its legs (BoneMaps.Dress)
             public bool Dress;
+            // pieces of the model that touch keep the same weights where they meet, so they stay attached
+            public bool Attach = true;
 
             // move the model's arms and feet onto the fighter's, as modders do by hand, so it holds
             // things and steps where the fighter does (needs a bone map); false keeps the model's shape
@@ -1045,6 +1047,11 @@ namespace SkinTool
                         w[i] = (float[])w[near].Clone();
                     }
 
+            // 3d. pieces that touch (a sleeve on a shirt, a leg in a pair of shorts) take the same weights
+            // where they meet, so the join can't open up in any pose; the weights around it ease into that
+            if (opt.Attach)
+                Attach(w, adj, boneCount, model.Triangles);
+
             // 4. keep the strongest few influences, as the game expects
             Weights = new SkinBuilder.Influence[n][];
             for (int i = 0; i < n; i++)
@@ -1075,6 +1082,51 @@ namespace SkinTool
             int rigid = RigidPart.Count(r => r);
             Report += $"{Part.Max() + 1} parts, {rigid} of {n} vertices in small parts that move as one piece\n";
             Report += $"bones used: {string.Join(",", Weights.SelectMany(x => x.Select(e => e.Bone)).Distinct().OrderBy(b => b))}\n";
+        }
+
+        private void Attach(float[][] w, HashSet<int>[] adj, int boneCount, List<ObjModel.Triangle> triangles)
+        {
+            // only a piece's open edge counts (a sleeve's end at the shoulder, a shorts' hem): a closed piece
+            // stuck into another (BMO's arms in his box) or tucked inside one (legs up inside shorts) only
+            // overlaps it, and an outline shell lies over everything
+            var edges = new Dictionary<(int, int), int>();
+            var outline = new bool[Positions.Length];
+            foreach (var t in triangles)
+            {
+                var c = new[] { t.A.Position, t.B.Position, t.C.Position };
+                for (int k = 0; k < 3; k++)
+                {
+                    var e = (Math.Min(c[k], c[(k + 1) % 3]), Math.Max(c[k], c[(k + 1) % 3]));
+                    edges[e] = edges.GetValueOrDefault(e) + 1;
+                    if (t.Outline) outline[c[k]] = true;
+                }
+            }
+            var open = new bool[Positions.Length];
+            foreach (var (e, count) in edges)
+                if (count == 1)
+                    open[e.Item1] = open[e.Item2] = true;
+            // rigid details (buttons, claws) move as one piece on purpose; a tail keeps its own bones
+            bool Joinable(int i) => !RigidPart[i] && !Tail[i] && !outline[i];
+            var pairs = TouchingPairs(triangles).Where(p => (open[p.Item1] || open[p.Item2])
+                && Joinable(p.Item1) && Joinable(p.Item2)).ToList();
+            if (pairs.Count == 0)
+                return;
+            void Weld()
+            {
+                for (int pass = 0; pass < 4; pass++)
+                    foreach (var (i, j) in pairs)
+                        for (int b = 0; b < boneCount; b++)
+                            w[i][b] = w[j][b] = (w[i][b] + w[j][b]) / 2;
+            }
+            Weld();
+            var near = new HashSet<int>(pairs.SelectMany(p => new[] { p.Item1, p.Item2 }));
+            for (int ring = 0; ring < 2; ring++)
+                foreach (var i in near.ToList())
+                    near.UnionWith(adj[i].Where(j => !RigidPart[j]));
+            var seam = new HashSet<int>(pairs.SelectMany(p => new[] { p.Item1, p.Item2 }));
+            Smooth(w, adj, boneCount, 2, i => near.Contains(i) && !seam.Contains(i));
+            Weld();
+            Report += $"kept {pairs.Count} points where pieces touch attached\n";
         }
 
         private void Smooth(float[][] w, HashSet<int>[] adj, int boneCount, int passes, Func<int, bool> include)
@@ -1208,6 +1260,20 @@ namespace SkinTool
 
         private void JoinTouchingParts(HashSet<int>[] adj, List<ObjModel.Triangle> triangles)
         {
+            foreach (var (i, join) in TouchingPairs(triangles))
+            {
+                adj[i].Add(join);
+                adj[join].Add(i);
+            }
+        }
+
+        /// <summary>
+        /// Points of one piece that touch another piece (within 1% of the model's size), each with the
+        /// nearest corner of the triangle it touches.
+        /// </summary>
+        private List<(int, int)> TouchingPairs(List<ObjModel.Triangle> triangles)
+        {
+            var pairs = new List<(int, int)>();
             int n = Positions.Length;
             var min = new Vector3(float.MaxValue);
             var max = new Vector3(float.MinValue);
@@ -1263,11 +1329,9 @@ namespace SkinTool
                             }
                         }
                 if (join >= 0)
-                {
-                    adj[i].Add(join);
-                    adj[join].Add(i);
-                }
+                    pairs.Add((i, join));
             }
+            return pairs;
         }
 
         private static float DistanceToTriangle(Vector3 p, Vector3 a, Vector3 b, Vector3 c)

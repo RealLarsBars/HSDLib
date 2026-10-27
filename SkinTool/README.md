@@ -117,6 +117,14 @@ Other commands:
 - `inspect <costume.dat>`, `slots <Pl**.dat>`: list joints, meshes and visibility tables.
 - `preview ... --slots 55,56` draws only those mesh slots, to see what a slot holds.
 
+## Pieces that touch
+
+A model made of separate pieces (a shirt with the arms as their own meshes, legs inside a pair of shorts)
+keeps them joined: where a point of one piece touches another (within 1% of the model's size), both sides
+take the same weights, and the weights around the join ease into them, so the join can't open in any pose.
+Small details that move as one piece (buttons, claws) and tails are left alone. `--attach no` (or
+`attach = no` in skin.txt) turns it off, for loose pieces meant to swing on their own.
+
 ## Tail
 
 `--tail yes` (or `tail = yes` in skin.txt) says the model has a tail. Whatever sticks out behind the

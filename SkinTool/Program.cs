@@ -13,7 +13,7 @@ namespace SkinTool
         const string Usage =
 @"skintool build --model <model.obj/.fbx/.dae|model.zip> --dat <costume.dat> [--dat <costume.dat> ...] --out <folder|out.zip>
                [--fighter <Pl**.dat>] [--bones 41,22,...] [--scale 1.0] [--width 1.0] [--height 1.0] [--rotate 0 | x,y,z] [--textures <costume.dat>=<folder> ...]
-               [--legs auto|separate|body|cut] [--arms auto|fighter|body] [--neck auto|none|0.6] [--tail yes|no] [--leg-band 0.3] [--keep-shape]
+               [--legs auto|separate|body|cut] [--arms auto|fighter|body] [--neck auto|none|0.6] [--tail yes|no] [--attach yes|no] [--leg-band 0.3] [--keep-shape]
                [--pick <model in the zip or folder>] [--weapon <name>=<model|zip> [--weapon-pick <name>=<model>] [--weapon-flip <name>] ...]
                [--preview <out.png> [--anims <Pl**AJ.dat>]] [--overlay <out.png> [--fit-only]] [--portraits <folder>]
 skintool models <zip|folder> --out <folder>
@@ -39,6 +39,8 @@ build    Swaps the model into every costume given, keeping each costume's skelet
          head bone alone, so a wide head or face moves as one piece. auto finds a neck, none turns it off.
          --tail yes says the model has a tail: what sticks out behind it follows the fighter's tail bones
          (Fox, Falco, Pikachu, Pichu, Mewtwo, Yoshi); without it, everything behind follows the body.
+         --attach (yes by default) keeps separate pieces that touch (a sleeve on a shirt) joined in every
+         pose; no lets loose pieces swing on their own.
          The same rules can come with the model in a skin.txt next to the OBJ (""legs = body"").
          --overlay draws the fitted model over the first costume, to check its size; with --fit-only
          that's all it does (no costumes are written, --out isn't needed).
@@ -191,7 +193,8 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                     case "leg-band": opt.LegBand = float.Parse(value, CultureInfo.InvariantCulture); break;
                     case "neck": opt.Neck = Neck(value); break;
                     case "tail": opt.HasTail = YesNo("tail", value); break;
-                    default: throw new Exception($"skin.txt: unknown rule {name} (legs, arms, neck, scale, width, height, rotate, leg-band)");
+                    case "attach": opt.Attach = YesNo("attach", value); break;
+                    default: throw new Exception($"skin.txt: unknown rule {name} (legs, arms, neck, tail, attach, scale, width, height, rotate, leg-band)");
                 }
                 Console.WriteLine($"rule from skin.txt: {name} = {value}");
             }
@@ -296,6 +299,7 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                     case "--arms": opt.Arms = Rule("arms", Next(), "auto", "fighter", "body"); break;
                     case "--neck": opt.Neck = Neck(Next()); break;
                     case "--tail": opt.HasTail = YesNo("--tail", Next()); break;
+                    case "--attach": opt.Attach = YesNo("--attach", Next()); break;
                     case "--leg-band": opt.LegBand = float.Parse(Next(), CultureInfo.InvariantCulture); break;
                     case "--cut-legs": opt.LegCut = float.Parse(Next(), CultureInfo.InvariantCulture); break;
                     case "--width": opt.Width = Stretch("width", Next()); break;
