@@ -34,6 +34,8 @@ namespace SkinTool
             public Vert A, B, C;
             public Tex Tex;
             public int Slot;
+            // drawn from both sides in game (the mesh's cull flags are clear), as skin meshes are
+            public bool TwoSided;
         }
 
         // joint index -> extra rotation in degrees (x, y, z), per pose
@@ -77,11 +79,17 @@ namespace SkinTool
             }
 
             var bind = new Pose { Name = "bind" };
+            // the blend, plus the character and the model on their own (the model on a see-through
+            // background), so the panel can fade one over the other
             var sheet = new Bitmap(cell * 2, cell);
+            var fighterSheet = new Bitmap(cell * 2, cell);
+            var modelSheet = new Bitmap(cell * 2, cell, clear: true);
             for (int v = 0; v < 2; v++)
             {
                 var img = Render(sk, original, bind, v * 90f, cell);
-                img.Blend(Render(sk, tris, bind, v * 90f, cell, cull: false, clear: true), 0.6f);
+                var mine = Render(sk, tris, bind, v * 90f, cell, cull: false, clear: true);
+                fighterSheet.Draw(img, v * cell, 0);
+                img.Blend(mine, 0.6f);
                 // where the head starts: a dashed line, placed the way Render places heights
                 if (!float.IsNaN(neckY))
                 {
@@ -90,10 +98,15 @@ namespace SkinTool
                     for (int x = 0; x < cell && y >= 0 && y < cell - 1; x++)
                         if (x / 6 % 2 == 0)
                             for (int dy = 0; dy < 2; dy++)
-                                img.Set(x, y + dy, new Vector3(1f, 0.85f, 0.2f));
+                                foreach (var b in new[] { img, mine })
+                                    b.Set(x, y + dy, new Vector3(1f, 0.85f, 0.2f));
                 }
                 sheet.Draw(img, v * cell, 0);
+                modelSheet.Draw(mine, v * cell, 0);
             }
+            var stem = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(output)), System.IO.Path.GetFileNameWithoutExtension(output));
+            fighterSheet.SavePng(stem + "-fighter.png");
+            modelSheet.SavePng(stem + "-model.png");
             sheet.SavePng(output);
             Console.WriteLine($"wrote {output}");
         }
@@ -390,6 +403,7 @@ namespace SkinTool
                     foreach (var pobj in dobj.Pobj.List)
                     {
                         var dl = pobj.ToDisplayList();
+                        bool twoSided = (pobj.Flags & (POBJ_FLAG.CULLBACK | POBJ_FLAG.CULLFRONT)) == 0;
                         var envs = pobj.EnvelopeWeights;
                         bool env = envs != null && pobj.HasAttribute(GXAttribName.GX_VA_PNMTXIDX);
                         int owner = pobj.SingleBoundJOBJ != null ? sk.IndexOf(pobj.SingleBoundJOBJ) : ji;
@@ -424,20 +438,20 @@ namespace SkinTool
                             {
                                 case GXPrimitiveType.Triangles:
                                     for (int i = 0; i + 2 < conv.Count; i += 3)
-                                        tris.Add(new Tri { A = conv[i], B = conv[i + 1], C = conv[i + 2], Tex = tex, Slot = slot });
+                                        tris.Add(new Tri { A = conv[i], B = conv[i + 1], C = conv[i + 2], Tex = tex, Slot = slot, TwoSided = twoSided });
                                     break;
                                 case GXPrimitiveType.TriangleStrip:
                                     // every other strip triangle runs the other way round
                                     for (int i = 2; i < conv.Count; i++)
                                         tris.Add(i % 2 == 0
-                                            ? new Tri { A = conv[i - 2], B = conv[i - 1], C = conv[i], Tex = tex, Slot = slot }
-                                            : new Tri { A = conv[i - 1], B = conv[i - 2], C = conv[i], Tex = tex, Slot = slot });
+                                            ? new Tri { A = conv[i - 2], B = conv[i - 1], C = conv[i], Tex = tex, Slot = slot, TwoSided = twoSided }
+                                            : new Tri { A = conv[i - 1], B = conv[i - 2], C = conv[i], Tex = tex, Slot = slot, TwoSided = twoSided });
                                     break;
                                 case GXPrimitiveType.Quads:
                                     for (int i = 0; i + 3 < conv.Count; i += 4)
                                     {
-                                        tris.Add(new Tri { A = conv[i], B = conv[i + 1], C = conv[i + 2], Tex = tex, Slot = slot });
-                                        tris.Add(new Tri { A = conv[i + 2], B = conv[i + 3], C = conv[i], Tex = tex, Slot = slot });
+                                        tris.Add(new Tri { A = conv[i], B = conv[i + 1], C = conv[i + 2], Tex = tex, Slot = slot, TwoSided = twoSided });
+                                        tris.Add(new Tri { A = conv[i + 2], B = conv[i + 3], C = conv[i], Tex = tex, Slot = slot, TwoSided = twoSided });
                                     }
                                     break;
                             }
@@ -524,8 +538,9 @@ namespace SkinTool
                 int maxY = Math.Min(size - 1, (int)MathF.Ceiling(MathF.Max(sa.Y, MathF.Max(sb.Y, sc.Y))));
                 float area = Edge(sa, sb, sc);
                 if (MathF.Abs(area) < 1e-6f) continue;
-                // the game doesn't draw back faces, so neither does the preview (an inside-out mesh shows)
-                if (cull && area * CullSign > 0) continue;
+                // the game doesn't draw back faces of meshes that cull them, so neither does the preview
+                // (an inside-out mesh shows); skin meshes are drawn from both sides
+                if (cull && !t.TwoSided && area * CullSign > 0) continue;
 
                 for (int y = minY; y <= maxY; y++)
                     for (int x = minX; x <= maxX; x++)
