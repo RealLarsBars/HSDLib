@@ -905,6 +905,20 @@ namespace SkinTool
                         for (int b = 0; b < boneCount; b++)
                             own[b] += w[i][b];
                     Normalize(own);
+                    // a fighter that kicks by stretching its feet: the whole shoe goes with the foot, or half of
+                    // it stays on the body and it smears out from under the body
+                    if (feetOnly)
+                    {
+                        int foot = -1;
+                        for (int b = 0; b < boneCount; b++)
+                            if (BoneRegion[b] == LegLeft || BoneRegion[b] == LegRight)
+                                if (foot < 0 || own[b] > own[foot]) foot = b;
+                        if (foot >= 0 && own[foot] > 0)
+                        {
+                            own = new float[boneCount];
+                            own[foot] = 1;
+                        }
+                    }
                     var at = members.Aggregate(Vector3.Zero, (a, i) => a + Positions[i]) / members.Count;
                     Report += $"part {part}: {members.Count} vertices around ({at.X:F1}, {at.Y:F1}, {at.Z:F1}) are a foot, follow bone {Array.IndexOf(own, own.Max())}\n";
                     foreach (var i in members)
