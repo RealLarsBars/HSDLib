@@ -887,7 +887,9 @@ namespace SkinTool
             // the body pieces of a model built from pieces keep their shape (a box doesn't bend) and move
             // together, so a face plate can't slide over the box under it: the pieces above the neck as one
             // with the head, all others as one with the bones they follow on average, the head left out
-            bool aboveNeck(List<int> members) => !float.IsNaN(NeckY) && members.All(i => Positions[i].Y > NeckY);
+            // (a face that dips a little below the neck line is still the head; BMO's box, a good part of it
+            // below the line, is the body)
+            bool aboveNeck(List<int> members) => !float.IsNaN(NeckY) && members.Count(i => Positions[i].Y < NeckY) * 4 < members.Count;
             var pieces = Enumerable.Range(0, Part.Max() + 1)
                 .Select(part => Enumerable.Range(0, n).Where(i => Part[i] == part).ToList())
                 .Where(members => members.Count > 0 && BodyPiece[members[0]])
@@ -1112,26 +1114,49 @@ namespace SkinTool
             RigidPart = new bool[n];
             BodyPiece = new bool[n];
             int largest = sizes.Count > 0 ? sizes.Max() : 0;
-            if (largest >= n * opt.RigidPartShare)
+            int small = Enumerable.Range(0, n).Count(i => sizes[Part[i]] < n * opt.RigidPartShare);
+            if (largest >= n * opt.RigidPartShare && small * 2 < n)
             {
                 for (int i = 0; i < n; i++)
                     RigidPart[i] = sizes[Part[i]] < n * opt.RigidPartShare;
                 return;
             }
 
-            // no piece is big enough to be the body: the model is built from pieces that touch (BMO's box,
-            // face plate, arms and legs). Each point that touches another piece is joined to it, so weights
+            // no piece is big enough to be the body, or most of the model is pieces too small to count: it
+            // is built from pieces that touch (BMO's box, face plate, arms and legs; Peggy's arms, shorts
+            // and shins). Each point that touches another piece is joined to it, so weights
             // blend across the joins and an arm stays on the box when it bends; only the small pieces
             // (buttons, screws) move as one
             JoinTouchingParts(adj, triangles);
             var bodyCount = new int[count];
-            for (int i = 0; i < n; i++)
-                if (ModelRegion[i] == Body)
-                    bodyCount[Part[i]]++;
+            var lowCount = new int[count];
             for (int i = 0; i < n; i++)
             {
-                RigidPart[i] = sizes[Part[i]] < largest * 0.25f;
-                BodyPiece[i] = !RigidPart[i] && bodyCount[Part[i]] * 2 > sizes[Part[i]];
+                if (ModelRegion[i] == Body)
+                    bodyCount[Part[i]]++;
+                if (!float.IsNaN(HipY) && Positions[i].Y < HipY)
+                    lowCount[Part[i]]++;
+            }
+            // a small piece is rigid (a button), but not a leg or arm that reaches a good way along the
+            // limb (Peggy's legs below her shorts): that bends at the knee
+            var limbCount = new int[count];
+            var low = Enumerable.Repeat(float.MaxValue, count).ToArray();
+            var high = Enumerable.Repeat(float.MinValue, count).ToArray();
+            float height = Positions.Max(q => q.Y) - Positions.Min(q => q.Y);
+            for (int i = 0; i < n; i++)
+            {
+                if (ModelRegion[i] != Body)
+                    limbCount[Part[i]]++;
+                low[Part[i]] = MathF.Min(low[Part[i]], Positions[i].Y);
+                high[Part[i]] = MathF.Max(high[Part[i]], Positions[i].Y);
+            }
+            bool Limb(int part) => limbCount[part] * 2 > sizes[part] && high[part] - low[part] > height * 0.15f;
+            for (int i = 0; i < n; i++)
+            {
+                RigidPart[i] = sizes[Part[i]] < largest * 0.25f && !Limb(Part[i]);
+                // a body piece keeps its shape only when it sits above the legs (BMO's box); one reaching
+                // down into them (Peggy's shorts) bends with them, or the legs come out from under it
+                BodyPiece[i] = !RigidPart[i] && bodyCount[Part[i]] * 2 > sizes[Part[i]] && lowCount[Part[i]] * 10 <= sizes[Part[i]];
             }
             Report += $"the model is {count} separate pieces: pieces that touch bend together\n";
         }
