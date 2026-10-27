@@ -33,10 +33,14 @@ What `build` does, in the order the usual Blender + HSDRaw tutorial does it by h
 5. **Keep the skeleton**: joints are never touched, including their flags. Every output is read back
    and checked against the original (`check` does the same for any skin), so it stays safe for Slippi.
 
+`--model` takes an OBJ (with its MTL), or an FBX, DAE, glTF/GLB or 3DS file (read with Assimp). FBX
+files are turned to stand up the way their up axis says; textures packed inside a file are written
+out next to it. Positions at the same place are shared, so texture seams don't split the surface.
+
 Every costume given with `--dat` gets the same fit and weights; costumes whose bones sit slightly
 differently (Falcon's, Kirby's) get the model moved with their bones. `--textures PlFxGr.dat=green/`
 swaps in PNGs from another folder (matched by file name) for one costume. `--model` can be a .zip of
-the OBJ, MTL and textures, and an `--out` ending in `.zip` collects the costumes in one zip.
+the model and its textures, and an `--out` ending in `.zip` collects the costumes in one zip.
 
 **Legs.** A model with no real legs (a round body on little feet) is found from its shape. Its body
 works as legs: the bottom 30% (`--leg-band`) bends with the fighter's legs, left half with the left
