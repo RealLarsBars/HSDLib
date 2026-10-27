@@ -23,6 +23,13 @@ namespace SkinTool
             // as libdl.so.2 (and from glibc 2.34 its functions live in libc itself)
             NativeLibrary.SetDllImportResolver(typeof(AssimpContext).Assembly, (name, assembly, paths) =>
                 name == "libdl.so" && (NativeLibrary.TryLoad("libdl.so.2", out var handle) || NativeLibrary.TryLoad("libc.so.6", out handle)) ? handle : IntPtr.Zero);
+
+            // a published skintool carries the native library next to it (AssimpNet's own search only
+            // looks in places a normal build puts it)
+            var lib = Path.Combine(AppContext.BaseDirectory, RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "Assimp64.dll"
+                : RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? "libassimp.dylib" : "libassimp.so");
+            if (File.Exists(lib) && !Assimp.Unmanaged.AssimpLibrary.Instance.IsLibraryLoaded)
+                Assimp.Unmanaged.AssimpLibrary.Instance.LoadLibrary(lib);
         }
 
         public static bool IsModel(string path) => Extensions.Contains(Path.GetExtension(path).ToLowerInvariant());
