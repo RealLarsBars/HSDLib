@@ -54,7 +54,7 @@ namespace SkinTool
         /// The fitted model laid over the original costume, front and side, in the bind pose, to see how its
         /// size and turn compare before building.
         /// </summary>
-        public static void Overlay(string costume, HSDRaw.Melee.Pl.SBM_FighterData fighter, ObjModel model, Vector3[] positions, string output)
+        public static void Overlay(string costume, HSDRaw.Melee.Pl.SBM_FighterData fighter, ObjModel model, Vector3[] positions, string output, float neckY = float.NaN)
         {
             const int cell = 320;
             var root = (HSD_JOBJ)new HSDRawFile(costume).Roots[0].Data;
@@ -82,6 +82,16 @@ namespace SkinTool
             {
                 var img = Render(sk, original, bind, v * 90f, cell);
                 img.Blend(Render(sk, tris, bind, v * 90f, cell, cull: false, clear: true), 0.6f);
+                // where the head starts: a dashed line, placed the way Render places heights
+                if (!float.IsNaN(neckY))
+                {
+                    int hip = Math.Min(4, sk.Joints.Count - 1);
+                    int y = (int)MathF.Round(cell * 0.92f - (neckY - sk.Position(hip).Y + 8.3f) * cell / 26f);
+                    for (int x = 0; x < cell && y >= 0 && y < cell - 1; x++)
+                        if (x / 6 % 2 == 0)
+                            for (int dy = 0; dy < 2; dy++)
+                                img.Set(x, y + dy, new Vector3(1f, 0.85f, 0.2f));
+                }
                 sheet.Draw(img, v * cell, 0);
             }
             sheet.SavePng(output);
@@ -227,6 +237,75 @@ namespace SkinTool
             Console.WriteLine($"wrote {output}");
             return 0;
         }
+
+        /// <summary>
+        /// Poses the skin in each test pose and finds where it gets pulled apart: triangles whose longest
+        /// edge grows to several times its length at rest, the sign of a part following bones it doesn't
+        /// belong to (a head fanning out into wings). Returns a line to show the user, or null when the
+        /// skin holds together.
+        /// </summary>
+        public static string StretchCheck(string dat, HSDRaw.Melee.Pl.SBM_FighterData fighter, List<Pose> poses)
+        {
+            var file = new HSDRawFile(dat);
+            var sk = new Skeleton((HSD_JOBJ)file.Roots[0].Data);
+            var hidden = fighter != null ? Slots.HiddenByDefault(fighter) : new HashSet<int>();
+            var weaponSlots = fighter != null ? Weapons.AllSlots(fighter, BoneMaps.Code(dat)) : new HashSet<int>();
+            var tris = Decode(sk).Where(t => !hidden.Contains(t.Slot) && !weaponSlots.Contains(t.Slot)).ToList();
+            if (tris.Count == 0)
+                return null;
+
+            static float Longest(Vector3 a, Vector3 b, Vector3 c) => MathF.Max(Vector3.Distance(a, b), MathF.Max(Vector3.Distance(b, c), Vector3.Distance(c, a)));
+            static float Area(Tri t) => Vector3.Cross(t.B.Pos - t.A.Pos, t.C.Pos - t.A.Pos).Length() / 2;
+            var rest = tris.Select(t => Longest(t.A.Pos, t.B.Pos, t.C.Pos)).ToArray();
+            var worst = new float[tris.Count];
+            var worstPose = new string[tris.Count];
+            foreach (var pose in poses)
+            {
+                var skin = PosedSkinning(sk, pose);
+                var posed = new Dictionary<Vert, Vector3>();
+                Vector3 P(Vert v)
+                {
+                    if (posed.TryGetValue(v, out var p)) return p;
+                    p = Vector3.Zero;
+                    for (int i = 0; i < v.Bones.Length; i++)
+                        p += Vector3.Transform(v.Pos, skin[v.Bones[i]]) * v.Weights[i];
+                    return posed[v] = p;
+                }
+                for (int i = 0; i < tris.Count; i++)
+                {
+                    if (rest[i] < 1e-5f) continue;
+                    float r = Longest(P(tris[i].A), P(tris[i].B), P(tris[i].C)) / rest[i];
+                    if (r > worst[i]) { worst[i] = r; worstPose[i] = pose.Name; }
+                }
+            }
+
+            // by area, so big pieces count and slivers at elbows and knees don't
+            float total = tris.Sum(Area);
+            var bad = Enumerable.Range(0, tris.Count).Where(i => worst[i] > StretchLimit).ToList();
+            float share = total > 0 ? bad.Sum(i => Area(tris[i])) / total : 0;
+            Console.WriteLine(FormattableString.Invariant($"stretch check: {share:P1} of the skin's area pulled to more than {StretchLimit}x in some pose"));
+            if (share < StretchWarn)
+                return null;
+
+            // where: the bone the most bad area follows, named from the fighter's bone map
+            var roles = BoneMaps.Get(BoneMaps.Code(dat)) ?? new Dictionary<string, int>();
+            int Main(Vert v) => v.Bones[Array.IndexOf(v.Weights, v.Weights.Max())];
+            int bone = bad.GroupBy(i => Main(tris[i].A)).OrderByDescending(g => g.Sum(i => Area(tris[i]))).First().Key;
+            string where = roles.FirstOrDefault(r => r.Value == bone).Key switch
+            {
+                "face" => "the head",
+                "body" or "butt" or "chest" => "the body",
+                "lsh" or "lel" or "lha" or "rsh" or "rel" or "rha" => "an arm",
+                "lle" or "lkn" or "lfb" or "lff" or "rle" or "rkn" or "rfb" or "rff" => "a leg",
+                _ => $"the part on bone {bone}",
+            };
+            string move = bad.GroupBy(i => worstPose[i]).OrderByDescending(g => g.Sum(i => Area(tris[i]))).First().Key;
+            return FormattableString.Invariant($"{share:P0} of the skin gets pulled apart in some moves, mostly around {where} (worst in {move}). It may look torn in game: check the preview, and try moving the head line or another Arms setting.");
+        }
+
+        // Past 4x by area: Fox's own skin 0.5 %, Monty on 7 fighters 0.1 to 1.5 %, Squidward with his face
+        // read as arms 2.9 % and with his head as arms 7.2 %
+        const float StretchLimit = 4f, StretchWarn = 0.025f;
 
         public static List<Pose> DefaultPoses()
         {

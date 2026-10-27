@@ -64,6 +64,11 @@ namespace SkinTool
 
             // parts with fewer vertices than this share of the model move as one piece with the body around them
             public float RigidPartShare = 0.15f;
+
+            // where the head starts, as a share of the model's height from the bottom: everything above
+            // follows the head bone alone, so a wide head or face is never read as arms and moves as one
+            // piece. NaN works it out (a neck narrower than the head above it), 0 or less: no such line
+            public float Neck = float.NaN;
         }
 
         public Vector3[] Positions;
@@ -78,6 +83,10 @@ namespace SkinTool
         public bool[] RigidPart;
 
         public string Report = "";
+
+        // the fitted height of the neck line (NaN when there's none)
+        public float NeckY = float.NaN;
+        private int HeadBone = -1;
 
         // detail bone -> the bone that takes its weight
         private int[] Remap;
@@ -112,10 +121,41 @@ namespace SkinTool
             }
             else
                 rig.Report += $"detail bones folded into their parents: {string.Join(",", merged)}\n";
+            rig.HeadBone = head;
             rig.FighterRegions(fighter, skeleton, head, opt.Roles);
             rig.Fit(model, fighter, skeleton, opt);
             rig.Transfer(model, fighter, opt);
             return rig;
+        }
+
+        /// <summary>
+        /// A neck in the model's outline: a narrow spot in its upper half with a head above it at least
+        /// half as wide again and as wide as the body, taking up a good part of the height. Returns the share of the height where
+        /// the head starts, or 0 when there's no clear neck (a round body with a face on the front).
+        /// </summary>
+        private static float FindNeck(float[] reach, float typical, int top, float crotch)
+        {
+            int slices = reach.Length;
+            // above the arms held out, if they are: shoulders are below the neck
+            int from = Math.Max(slices / 2, (int)(crotch * slices) + 1);
+            for (int s = top; s >= from; s--)
+                if (reach[s] > typical * 2f) { from = s + 1; break; }
+            int best = -1;
+            for (int s = from; s <= top - slices / 8; s++)
+            {
+                if (reach[s] <= 0) continue;
+                float above = Enumerable.Range(s + 1, top - s).Max(k => reach[k]);
+                // and the head is a real one, at least as wide as the body (not ears or a tuft on top)
+                if (above >= reach[s] * 1.5f && above >= typical && (best < 0 || reach[s] < reach[best]))
+                    best = s;
+            }
+            if (best < 0)
+                return 0;
+            // the head starts where the outline widens again above the narrowest spot
+            int start = best;
+            while (start < top && reach[start + 1] <= reach[best] * 1.25f)
+                start++;
+            return (float)start / slices;
         }
 
         private void Fit(ObjModel model, FighterMesh fighter, Skeleton skeleton, Options opt)
@@ -232,9 +272,20 @@ namespace SkinTool
             float typical = bodySlices.Count > 0 ? bodySlices[bodySlices.Count / 2] : size.X / 2;
             var bodyReach = new float[slices];
             int top = Enumerable.Range(0, slices).Last(s => reach[s] > 0);
+
+            // the neck: above it is all head
+            float neck = opt.Neck;
+            if (float.IsNaN(neck))
+                neck = FindNeck(reach, typical, top, modelCrotch);
+            int neckSlice = neck > 0 ? Slice(neck) : slices;
+            if (neck > 0)
+            {
+                NeckY = target.Y + neck * size.Y * scale * opt.Height;
+                Report += $"head: everything above {neck:P0} of the model's height follows the head ({(float.IsNaN(opt.Neck) ? "found a neck" : "set by hand")})\n";
+            }
             for (int s = 0; s < slices; s++)
             {
-                if (reach[s] <= typical * 1.35f)
+                if (reach[s] <= typical * 1.35f || s >= neckSlice)
                 {
                     bodyReach[s] = reach[s];
                     continue;
@@ -731,6 +782,21 @@ namespace SkinTool
             Smooth(w, adj, boneCount, opt.SmoothPasses, i => true);
             Smooth(w, adj, boneCount, opt.BodySmoothPasses, i => ModelRegion[i] == Body);
 
+            // 2b. above the neck everything follows the head alone, blending in over a short band
+            if (!float.IsNaN(NeckY) && HeadBone >= 0)
+            {
+                int head = Remap[HeadBone];
+                float h = Positions.Max(q => q.Y) - Positions.Min(q => q.Y);
+                for (int i = 0; i < n; i++)
+                {
+                    float k = SmoothStep(NeckY - h * 0.04f, NeckY + h * 0.02f, Positions[i].Y);
+                    if (k <= 0) continue;
+                    for (int b = 0; b < boneCount; b++)
+                        w[i][b] *= 1 - k;
+                    w[i][head] += k;
+                }
+            }
+
             // 3. small separate parts (claws, teeth, whiskers, eyes) move as one piece with the
             // body around them, so they stay attached to it
             var body = Enumerable.Range(0, n).Where(i => !RigidPart[i]).ToList();
@@ -1053,3 +1119,4 @@ namespace SkinTool
         }
     }
 }
+

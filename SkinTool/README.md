@@ -24,7 +24,7 @@ What `build` does, in the order the usual Blender + HSDRaw tutorial does it by h
    and its body on the hips. Arms that sit far from the fighter's arms partly stay with the body, so
    they don't get flung around the fighter's shoulders. Weights are smoothed over the surface, cut to
    3 per vertex and normalized. Small separate pieces (claws, teeth, whiskers) move as one piece with
-   the body around them.
+   the body around them. Above the neck everything follows the head alone (see Head below).
 3. **Import**: one mesh per texture, CMP textures (RGB5A3 when they have transparency), triangle strips.
 4. **Dummy meshes**: pads the costume back to its original mesh count, each dummy with as many
    textures as the mesh it replaces (some fighters have meshes with two or none). The model goes into
@@ -49,12 +49,26 @@ fighter's height. Arms far below the fighter's mostly stay with the body. Small 
 bases of claws and teeth) are closed, and every mesh is drawn from both sides, so bending never
 shows holes.
 
+**Head.** A head wider than the body (Squidward) would otherwise be read as arms and fan out with the
+fighter's arms. The tool looks for a neck: a narrow spot in the upper half with a head above it at
+least half as wide again and as wide as the body. Everything above that line follows the fighter's
+head bone alone, blending in over a short band, so the head and face move as one piece. `--neck 0.6`
+sets the line by hand (a share of the model's height), `--neck none` turns it off. The size check
+(`--overlay`) draws the line dashed in yellow.
+
+**Stretch check.** With `--fighter` and `--anims`, a build poses the first costume in the fighter's
+test moves and measures how far each triangle's longest edge grows. When more than 2.5% of the skin's
+area grows past 4x, which the original costumes and a well fitted model never get near, it prints a
+`warning:` line naming the part and the move (`stretch <costume.dat> <Pl**.dat> <Pl**AJ.dat>` runs it
+on any costume).
+
 **Rules per model.** When the automatic choice is wrong, say how the model works, on the command
 line or in a `skin.txt` next to the OBJ (or in the zip):
 
 ```
 legs = body       # auto | separate | body | cut (cut: two legs down the fighter's legs)
 arms = auto       # auto | fighter (always onto the fighter's arms) | body
+neck = auto       # auto | none | 0.6 (where the head starts, as a share of the height)
 scale = 1.1
 width = 1.0       # stretch sideways only
 height = 1.2      # stretch upwards only (from the floor)
