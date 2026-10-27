@@ -32,6 +32,11 @@ namespace SkinTool
         // the fighter's data file, when known, to pick slots the game shows
         public HSDRaw.Melee.Pl.SBM_FighterData FighterData;
 
+        // weapon slots: the body never goes in them, and these parts (the costume's own weapon or an
+        // uploaded one) fill them
+        public HashSet<int> WeaponSlots = new();
+        public List<Weapons.Part> WeaponParts = new();
+
         public SkinBuilder(HSDRawFile file, Skeleton skeleton)
         {
             this.file = file;
@@ -61,7 +66,7 @@ namespace SkinTool
                 .OrderByDescending(g => g.Count())
                 .ToList();
 
-            var shown = Slots.Preferred(FighterData, slotCount).Where(i => !animated.Contains(i)).ToList();
+            var shown = Slots.Preferred(FighterData, slotCount).Where(i => !animated.Contains(i) && !WeaponSlots.Contains(i)).ToList();
             var freeSlots = shown.Where(i => textureCounts[i] == 1).ToList();
             if (groups.Count > freeSlots.Count && shown.Count >= groups.Count)
             {
@@ -135,6 +140,23 @@ namespace SkinTool
                 real.Add(dobj);
             }
 
+            var weapons = new Dictionary<int, HSD_DOBJ>();
+            foreach (var part in WeaponParts)
+            {
+                var joint = skeleton.Joints[part.Joint];
+                var dobj = new HSD_DOBJ()
+                {
+                    Mobj = part.Mobj ?? CreateMaterial(part.Texture, textures),
+                    // one bone at full weight: stored relative to it, as the original rigid mesh was
+                    Pobj = generator.CreatePOBJsFromTriangleList(part.Vertices, part.Attrs,
+                        part.Vertices.Select(_ => new[] { joint }).ToList(), part.Vertices.Select(_ => new[] { 1f }).ToList()),
+                };
+                for (var pobj = dobj.Pobj; pobj != null; pobj = pobj.Next)
+                    pobj.Flags = (pobj.Flags & ~(POBJ_FLAG.CULLFRONT | POBJ_FLAG.CULLBACK)) | part.Cull;
+                weapons[part.Slot] = dobj;
+                enveloped.Add(part.Joint);
+            }
+
             generator.SaveChanges();
 
             // lay out slots: real meshes first, skipping the ones the game animates (eyes),
@@ -142,6 +164,8 @@ namespace SkinTool
             var slots = new HSD_DOBJ[slotCount];
             for (int i = 0; i < real.Count; i++)
                 slots[freeSlots[i]] = real[i];
+            foreach (var (slot, dobj) in weapons)
+                slots[slot] = dobj;
             for (int i = 0; i < slotCount; i++)
                 slots[i] ??= CreateDummy(textureCounts[i]);
 

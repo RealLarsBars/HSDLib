@@ -14,7 +14,10 @@ namespace SkinTool
 @"skintool build --model <model.obj/.fbx/.dae|model.zip> --dat <costume.dat> [--dat <costume.dat> ...] --out <folder|out.zip>
                [--fighter <Pl**.dat>] [--bones 41,22,...] [--scale 1.0] [--rotate 0] [--textures <costume.dat>=<folder> ...]
                [--legs auto|separate|body|cut] [--arms auto|fighter|body] [--leg-band 0.3] [--keep-shape]
-               [--preview <out.png> [--anims <Pl**AJ.dat>]]
+               [--pick <model in the zip or folder>] [--weapon <name>=<model|zip> [--weapon-pick <name>=<model>] [--weapon-flip <name>] ...]
+               [--preview <out.png> [--anims <Pl**AJ.dat>]] [--overlay <out.png> [--fit-only]]
+skintool models <zip|folder> --out <folder>
+skintool weapons <costume.dat>
 skintool inspect <costume.dat>
 skintool check <original.dat> <skin.dat>
 skintool preview <out.png> <costume.dat> [<costume.dat> ...] [--anims <Pl**.dat> <Pl**AJ.dat>] [--bones]
@@ -30,7 +33,14 @@ build    Swaps the model into every costume given, keeping each costume's skelet
          bends with the fighter's legs), or a bottom cut into two legs; auto picks from its shape.
          --arms fighter always moves its arms onto the fighter's, body keeps them mostly with the body.
          The same rules can come with the model in a skin.txt next to the OBJ (""legs = body"").
+         --overlay draws the fitted model over the first costume, to check its size; with --fit-only
+         that's all it does (no costumes are written, --out isn't needed).
+         --pick chooses the model when a zip or folder holds more than one.
+         --weapon swaps one of the fighter's weapons (pan, sword, hammer; see weapons) for another model,
+         fitted over the original; --weapon-flip turns it end for end. Weapons not given keep the costume's own.
          --preview renders the first costume, in the fighter's real animations with --anims (needs --fighter).
+models   Lists the models in a zip or folder and draws each one (<folder>/<n>.png), to pick from.
+weapons  Lists the weapons a fighter holds, by the names --weapon takes.
 inspect  Lists a costume's joints and meshes.
 check    Compares a finished skin with the original costume, as the build does.
 preview  Renders each costume in a few test poses, one row per costume.
@@ -55,6 +65,8 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                     case "slots": return Slots.Dump(args);
                     case "bonemap": return BoneMaps.Dump(args[1]);
                     case "check": return Check(args[1], args[2]);
+                    case "models": return Models(args.Skip(1).ToArray());
+                    case "weapons": return ListWeapons(args[1]);
                     default:
                         Console.WriteLine(Usage);
                         return 1;
@@ -133,6 +145,66 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
             }
         }
 
+        static int ListWeapons(string costume)
+        {
+            var list = Weapons.For(BoneMaps.Code(costume));
+            foreach (var w in list)
+                Console.WriteLine($"weapon {w.Key} {w.Name}");
+            if (list.Length == 0)
+                Console.WriteLine("no weapons");
+            return 0;
+        }
+
+        /// <summary>Lists every model in a zip or folder with a picture of each, so one can be picked.</summary>
+        static int Models(string[] args)
+        {
+            int o = Array.IndexOf(args, "--out");
+            if (args.Length < 3 || o < 0 || o + 1 >= args.Length)
+            {
+                Console.WriteLine(Usage);
+                return 1;
+            }
+            string input = args.Where((_, i) => i != o && i != o + 1).First(), outDir = args[o + 1];
+            Directory.CreateDirectory(outDir);
+            string scratch = null;
+            try
+            {
+                string folder = input;
+                if (input.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                {
+                    scratch = Directory.CreateTempSubdirectory("skintool").FullName;
+                    folder = scratch;
+                    ModelZip.Unpack(input, folder);
+                }
+                else if (!Directory.Exists(folder))
+                    folder = Path.GetDirectoryName(Path.GetFullPath(folder));
+
+                var models = ModelZip.ModelsIn(folder);
+                for (int i = 0; i < models.Count; i++)
+                {
+                    var name = Path.GetRelativePath(folder, models[i]).Replace('\\', '/');
+                    try
+                    {
+                        var obj = ObjModel.Load(models[i]);
+                        Preview.Thumbnail(obj, Path.Combine(outDir, $"{i}.png"));
+                        Console.WriteLine($"model {i} {obj.Triangles.Count} {name}");
+                    }
+                    catch (Exception e)
+                    {
+                        Console.WriteLine($"model {i} unreadable {name}: {e.Message}");
+                    }
+                }
+                if (models.Count == 0)
+                    Console.WriteLine("no models");
+            }
+            finally
+            {
+                if (scratch != null)
+                    Directory.Delete(scratch, true);
+            }
+            return 0;
+        }
+
         static int Check(string original, string skin)
         {
             var before = Validator.Snapshot((HSD_JOBJ)new HSDRawFile(original).Roots[0].Data);
@@ -145,7 +217,11 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
 
         static int Build(string[] args)
         {
-            string model = null, outDir = null, fighterDat = null, previewPng = null, animDat = null;
+            string model = null, outDir = null, fighterDat = null, previewPng = null, animDat = null, pick = null, overlayPng = null;
+            bool fitOnly = false;
+            var weaponFiles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var weaponPicks = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var weaponFlips = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var dats = new List<string>();
             var textureFolders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var opt = new AutoRig.Options();
@@ -169,6 +245,20 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                     case "--leg-band": opt.LegBand = float.Parse(Next(), CultureInfo.InvariantCulture); break;
                     case "--cut-legs": opt.LegCut = float.Parse(Next(), CultureInfo.InvariantCulture); break;
                     case "--rotate": opt.RotateY = float.Parse(Next(), CultureInfo.InvariantCulture); break;
+                    case "--pick": pick = Next(); break;
+                    case "--overlay": overlayPng = Next(); break;
+                    case "--fit-only": fitOnly = true; break;
+                    case "--weapon":
+                        var w = Next().Split('=', 2);
+                        if (w.Length != 2) throw new Exception("--weapon takes name=model");
+                        weaponFiles[w[0]] = w[1];
+                        break;
+                    case "--weapon-pick":
+                        var wp = Next().Split('=', 2);
+                        if (wp.Length != 2) throw new Exception("--weapon-pick takes name=model");
+                        weaponPicks[wp[0]] = wp[1];
+                        break;
+                    case "--weapon-flip": weaponFlips.Add(Next()); break;
                     case "--textures":
                         var kv = Next().Split('=', 2);
                         textureFolders[Path.GetFileName(kv[0])] = kv[1];
@@ -177,6 +267,8 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                 }
             }
 
+            if (fitOnly)
+                outDir ??= Path.Combine(Path.GetTempPath(), "skintool-unused");
             if (model == null || dats.Count == 0 || outDir == null)
             {
                 Console.WriteLine(Usage);
@@ -186,12 +278,28 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
             // a zip in, a zip out: unpack the model and collect the costumes in a scratch folder
             string scratch = null;
             string zipOut = null;
-            if (model.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) || outDir.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+            if (model.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) || outDir.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)
+                || weaponFiles.Values.Any(f => f.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)))
                 scratch = Directory.CreateTempSubdirectory("skintool").FullName;
             try
             {
-                if (model.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
-                    model = ModelZip.Extract(model, Path.Combine(scratch, "model"));
+                model = ModelZip.Find(model, Path.Combine(scratch ?? "", "model"), pick);
+
+                var code = BoneMaps.Code(dats[0]);
+                var uploads = new Dictionary<string, Weapons.Upload>(StringComparer.OrdinalIgnoreCase);
+                foreach (var (name, file) in weaponFiles)
+                {
+                    var weapon = Weapons.For(code).FirstOrDefault(x => x.Key.Equals(name, StringComparison.OrdinalIgnoreCase))
+                        ?? throw new Exception($"{Path.GetFileName(dats[0])} has no weapon called {name} (it has: {string.Join(", ", Weapons.For(code).Select(x => x.Key).DefaultIfEmpty("none"))})");
+                    var path = ModelZip.Find(file, Path.Combine(scratch ?? "", "weapon-" + weapon.Key), weaponPicks.GetValueOrDefault(name));
+                    var obj = ObjModel.Load(path);
+                    if (obj.Triangles.Count == 0)
+                        throw new Exception($"the {weapon.Name.ToLowerInvariant()} model has no triangles");
+                    uploads[weapon.Key] = new Weapons.Upload { Model = obj, Flip = weaponFlips.Contains(name) };
+                    Console.WriteLine($"weapon {weapon.Key}: {Path.GetFileName(path)}, {obj.Triangles.Count} triangles");
+                }
+                if (fighterDat == null && uploads.Count > 0)
+                    throw new Exception("--weapon needs --fighter, to find the weapon's slots");
                 if (outDir.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
                 {
                     zipOut = outDir;
@@ -199,17 +307,19 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                 }
 
                 ReadRules(model, opt, args.Where(a => a.StartsWith("--")).ToHashSet());
-                BuildCostumes(model, dats, outDir, fighterDat, textureFolders, opt);
+                BuildCostumes(model, dats, outDir, fighterDat, textureFolders, opt, uploads, overlayPng, fitOnly);
 
-                if (previewPng != null)
+                if (previewPng != null && !fitOnly)
                 {
                     var previewArgs = new List<string> { "preview", previewPng, Path.Combine(outDir, Path.GetFileName(dats[0])) };
                     if (animDat != null && fighterDat != null)
                         previewArgs.AddRange(new[] { "--anims", fighterDat, animDat });
+                    if (fighterDat != null)
+                        previewArgs.AddRange(new[] { "--fighter", fighterDat });
                     Preview.Run(previewArgs.ToArray());
                 }
 
-                if (zipOut != null)
+                if (zipOut != null && !fitOnly)
                 {
                     ModelZip.Pack(outDir, zipOut);
                     Console.WriteLine($"wrote {zipOut}");
@@ -224,9 +334,10 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
             return 0;
         }
 
-        static void BuildCostumes(string model, List<string> dats, string outDir, string fighterDat, Dictionary<string, string> textureFolders, AutoRig.Options opt)
+        static void BuildCostumes(string model, List<string> dats, string outDir, string fighterDat, Dictionary<string, string> textureFolders, AutoRig.Options opt, Dictionary<string, Weapons.Upload> uploads, string overlayPng = null, bool fitOnly = false)
         {
-            Directory.CreateDirectory(outDir);
+            if (!fitOnly)
+                Directory.CreateDirectory(outDir);
             var fighterData = fighterDat != null ? Slots.Load(fighterDat) : null;
             var obj = ObjModel.Load(model);
             int holes = obj.CloseSmallHoles();
@@ -249,6 +360,10 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
             }
             var rig = AutoRig.Run(obj, fighter, skeleton, opt);
             Console.Write(rig.Report);
+            if (overlayPng != null)
+                Preview.Overlay(dats[0], fighterData, obj, rig.Positions, overlayPng);
+            if (fitOnly)
+                return;
 
             foreach (var dat in dats)
             {
@@ -271,7 +386,14 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                     costumeModel = obj.WithTextureFolder(folder);
 
                 var before = Validator.Snapshot(root);
-                new SkinBuilder(file, sk) { FighterData = fighterData }.Replace(costumeModel, positions, normals, rig.Weights);
+                var builder = new SkinBuilder(file, sk) { FighterData = fighterData };
+                if (fighterData != null)
+                {
+                    var code = BoneMaps.Code(dat);
+                    builder.WeaponSlots = Weapons.AllSlots(fighterData, code);
+                    builder.WeaponParts = Weapons.Build(root, sk, fighterData, code, uploads);
+                }
+                builder.Replace(costumeModel, positions, normals, rig.Weights);
 
                 var output = Path.Combine(outDir, Path.GetFileName(dat));
                 file.Save(output);

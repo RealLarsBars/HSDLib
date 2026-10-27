@@ -22,6 +22,7 @@ namespace SkinTool
         /// for the metal effect, then other always-shown ones. Slots any table lists for the far-away
         /// low-detail model are left out, since the game hides them in normal play. Some fighters have
         /// several tables (hats, crowns, swords) and a slot is only "always shown" if every table shows it.
+        /// Slots in the body's group come before ones a later group switches on and off.
         /// </summary>
         public static List<int> Preferred(SBM_FighterData data, int slotCount)
         {
@@ -30,10 +31,17 @@ namespace SkinTool
                 return Enumerable.Range(0, slotCount).ToList();
 
             var low = new HashSet<int>();
+            var main = new HashSet<int>();
             HashSet<int> high = null, metal = null;
             foreach (var table in lookups.Where(t => t.HighPoly != null))
             {
                 low.UnionWith(Entries(table.LowPoly));
+                // the first group is the body; later ones switch on and off (weapons, hats)
+                var groups = table.HighPoly.Array;
+                if (groups.Length > 0)
+                    foreach (var e in groups[0].LookupEntries?.Array ?? Array.Empty<SBM_LookupEntry>())
+                        foreach (var b in e.Entries)
+                            main.Add(b);
                 var h = Entries(table.HighPoly);
                 var m = Entries(table.MetalPoly);
                 if (high == null) { high = h; metal = m; }
@@ -44,9 +52,33 @@ namespace SkinTool
 
             return Enumerable.Range(0, slotCount)
                 .Where(i => !low.Contains(i))
-                .OrderBy(i => high.Contains(i) && metal.Contains(i) ? 0 : high.Contains(i) ? 1 : 2)
+                .OrderBy(i => main.Contains(i) ? 0 : 1)
+                .ThenBy(i => high.Contains(i) && metal.Contains(i) ? 0 : high.Contains(i) ? 1 : 2)
                 .ThenBy(i => i)
                 .ToList();
+        }
+
+        /// <summary>
+        /// Slots the game hides unless something switches them on: the far-away model, and every choice
+        /// but the first of each switchable group (a sheathed sword, Peach's pan and racket).
+        /// </summary>
+        public static HashSet<int> HiddenByDefault(SBM_FighterData data)
+        {
+            var hidden = new HashSet<int>();
+            var shown = new HashSet<int>();
+            foreach (var table in data?.ModelLookupTables?.CostumeVisibilityLookups?.Array?.Where(t => t.HighPoly != null) ?? Enumerable.Empty<SBM_CostumeLookupTable>())
+            {
+                hidden.UnionWith(Entries(table.LowPoly));
+                var groups = table.HighPoly.Array;
+                for (int g = 0; g < groups.Length; g++)
+                {
+                    var choices = groups[g].LookupEntries?.Array ?? Array.Empty<SBM_LookupEntry>();
+                    for (int c = 0; c < choices.Length; c++)
+                        (g == 0 || c == 0 ? shown : hidden).UnionWith(choices[c].Entries.Select(b => (int)b));
+                }
+            }
+            hidden.ExceptWith(shown);
+            return hidden;
         }
 
         static HashSet<int> Entries(HSDArrayAccessor<SBM_LookupTable> t)
