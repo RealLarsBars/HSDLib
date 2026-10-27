@@ -56,6 +56,8 @@ line or in a `skin.txt` next to the OBJ (or in the zip):
 legs = body       # auto | separate | body | cut (cut: two legs down the fighter's legs)
 arms = auto       # auto | fighter (always onto the fighter's arms) | body
 scale = 1.1
+width = 1.0       # stretch sideways only
+height = 1.2      # stretch upwards only (from the floor)
 rotate = 180
 leg-band = 0.3
 ```

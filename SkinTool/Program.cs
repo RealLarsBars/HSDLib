@@ -12,7 +12,7 @@ namespace SkinTool
     {
         const string Usage =
 @"skintool build --model <model.obj/.fbx/.dae|model.zip> --dat <costume.dat> [--dat <costume.dat> ...] --out <folder|out.zip>
-               [--fighter <Pl**.dat>] [--bones 41,22,...] [--scale 1.0] [--rotate 0] [--textures <costume.dat>=<folder> ...]
+               [--fighter <Pl**.dat>] [--bones 41,22,...] [--scale 1.0] [--width 1.0] [--height 1.0] [--rotate 0] [--textures <costume.dat>=<folder> ...]
                [--legs auto|separate|body|cut] [--arms auto|fighter|body] [--leg-band 0.3] [--keep-shape]
                [--pick <model in the zip or folder>] [--weapon <name>=<model|zip> [--weapon-pick <name>=<model>] [--weapon-flip <name>] ...]
                [--preview <out.png> [--anims <Pl**AJ.dat>]] [--overlay <out.png> [--fit-only]]
@@ -29,6 +29,7 @@ build    Swaps the model into every costume given, keeping each costume's skelet
          --bones 41,22,... picks the bones to weight to; by default the fighter's bone map, if it has one.
          --textures swaps in PNGs from another folder for one costume (matched by file name).
          A .zip model (OBJ, MTL and textures) is unpacked first; an --out ending in .zip collects the costumes in one zip.
+         --width and --height stretch the fitted model sideways or upwards only (1 = as fitted).
          --legs says how the model's legs work: separate legs, a body that works as legs (the bottom
          bends with the fighter's legs), or a bottom cut into two legs; auto picks from its shape.
          --arms fighter always moves its arms onto the fighter's, body keeps them mostly with the body.
@@ -106,6 +107,12 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
             return (positions, normals);
         }
 
+        static float Stretch(string name, string value)
+        {
+            float v = float.Parse(value, CultureInfo.InvariantCulture);
+            return v >= 0.5f && v <= 2f ? v : throw new Exception($"{name} must be between 0.5 and 2, not {value}");
+        }
+
         static string Rule(string name, string value, params string[] allowed)
         {
             value = value.Trim().ToLowerInvariant();
@@ -137,9 +144,11 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                     case "legs": opt.Legs = Rule(name, value, "auto", "separate", "body", "cut"); break;
                     case "arms": opt.Arms = Rule(name, value, "auto", "fighter", "body"); break;
                     case "scale": opt.Scale = float.Parse(value, CultureInfo.InvariantCulture); break;
+                    case "width": opt.Width = Stretch(name, value); break;
+                    case "height": opt.Height = Stretch(name, value); break;
                     case "rotate": opt.RotateY = float.Parse(value, CultureInfo.InvariantCulture); break;
                     case "leg-band": opt.LegBand = float.Parse(value, CultureInfo.InvariantCulture); break;
-                    default: throw new Exception($"skin.txt: unknown rule {name} (legs, arms, scale, rotate, leg-band)");
+                    default: throw new Exception($"skin.txt: unknown rule {name} (legs, arms, scale, width, height, rotate, leg-band)");
                 }
                 Console.WriteLine($"rule from skin.txt: {name} = {value}");
             }
@@ -244,6 +253,8 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                     case "--arms": opt.Arms = Rule("arms", Next(), "auto", "fighter", "body"); break;
                     case "--leg-band": opt.LegBand = float.Parse(Next(), CultureInfo.InvariantCulture); break;
                     case "--cut-legs": opt.LegCut = float.Parse(Next(), CultureInfo.InvariantCulture); break;
+                    case "--width": opt.Width = Stretch("width", Next()); break;
+                    case "--height": opt.Height = Stretch("height", Next()); break;
                     case "--rotate": opt.RotateY = float.Parse(Next(), CultureInfo.InvariantCulture); break;
                     case "--pick": pick = Next(); break;
                     case "--overlay": overlayPng = Next(); break;

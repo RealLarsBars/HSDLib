@@ -15,6 +15,9 @@ namespace SkinTool
             // multiplies the automatic size
             public float Scale = 1;
 
+            // stretch the fitted model sideways or upwards only (from the floor, about its middle)
+            public float Width = 1, Height = 1;
+
             // degrees to turn the model around the vertical axis before fitting
             public float RotateY = 0;
 
@@ -145,8 +148,10 @@ namespace SkinTool
             var target = new Vector3((fighter.Min.X + fighter.Max.X) / 2, fighter.Min.Y, zMid);
             var origin = new Vector3((min.X + max.X) / 2, min.Y, (min.Z + max.Z) / 2);
 
-            Positions = pts.Select(p => (p - origin) * scale + target).ToArray();
-            Normals = model.Normals.Select(n => Vector3.TransformNormal(n, rot)).ToArray();
+            var grow = new Vector3(opt.Width, opt.Height, 1);
+            Positions = pts.Select(p => (p - origin) * scale * grow + target).ToArray();
+            // a stretch tips normals the other way
+            Normals = model.Normals.Select(n => Vector3.TransformNormal(n, rot) / grow).ToArray();
 
             // Weights are looked up with the model stretched over the fighter's whole body, so its
             // outermost hands land on the fighter's hands, its feet on the feet and its head on the
@@ -189,11 +194,11 @@ namespace SkinTool
                 // fill most of the fighter's frame, so it gets hit where the fighter does.
                 modelCrotch = opt.LegBand;
                 scale = MathF.Max(scale, 0.75f * byHeight * opt.Scale);
-                Positions = pts.Select(p => (p - origin) * scale + target).ToArray();
-                HipY = target.Y + opt.LegBand * size.Y * scale;
+                Positions = pts.Select(p => (p - origin) * scale * grow + target).ToArray();
+                HipY = target.Y + opt.LegBand * size.Y * scale * opt.Height;
                 FloorY = target.Y;
                 MiddleX = target.X;
-                HalfWidth = size.X * scale / 2;
+                HalfWidth = size.X * scale * opt.Width / 2;
                 MiddleZ = target.Z;
                 HalfDepth = size.Z * scale / 2;
                 Report += $"no real legs: the bottom {opt.LegBand:P0} of the body bends with the fighter's legs\n";
@@ -301,7 +306,7 @@ namespace SkinTool
                 string side = region == ArmLeft ? "l" : "r";
                 // only an arm already near the fighter's is moved onto it: lifting a low arm up to the
                 // shoulder bends it into a W that flaps about when running
-                float fittedY = (a.y - origin.Y) * scale + target.Y;
+                float fittedY = (a.y - origin.Y) * scale * opt.Height + target.Y;
                 bool near = opt.Arms switch { "fighter" => true, "body" => false, _ => MathF.Abs(fittedY - a.fy) < 0.15f * fighterSize.Y };
                 if (opt.Conform && near && opt.Roles != null && opt.Roles.TryGetValue(side + "sh", out int sh) && opt.Roles.TryGetValue(side + "ha", out int ha))
                 {
@@ -317,7 +322,7 @@ namespace SkinTool
                     Report += $"{RegionNames[region]}: moved onto the fighter's arm\n";
                     continue;
                 }
-                float fitted = (a.y - origin.Y) * scale + target.Y;
+                float fitted = (a.y - origin.Y) * scale * opt.Height + target.Y;
                 float off = MathF.Abs(fitted - a.fy) / MathF.Max(a.fTip - a.fRoot, 1e-4f);
                 LimbFollow[region] = Math.Clamp(1 - off, 0.2f, 1);
                 Report += $"{RegionNames[region]}: {fitted:F1} high next to the fighter's {a.fy:F1}, follows the arm bones {LimbFollow[region]:P0}\n";
@@ -361,7 +366,7 @@ namespace SkinTool
 
             Report += $"legs: the model's split at {modelCrotch:P0} of its height lines up with the top of the fighter's legs at {fighterCrotch:P0}\n";
 
-            Report += $"fitted size x{scale:F2}: {size.Y * scale:F1} tall next to the fighter's {fighterSize.Y:F1}, {size.X * scale:F1} wide next to its {fighterSize.X:F1}\n";
+            Report += $"fitted size x{scale:F2}: {size.Y * scale * opt.Height:F1} tall next to the fighter's {fighterSize.Y:F1}, {size.X * scale * opt.Width:F1} wide next to its {fighterSize.X:F1}\n";
         }
 
         /// <summary>
@@ -450,7 +455,7 @@ namespace SkinTool
 
             var origin = new Vector3(cx, cutY, cz);
             var target = new Vector3(fcx, hipY, zMid);
-            Positions = pts.Select(q => (q - origin) * scale + target).ToArray();
+            Positions = pts.Select(q => (q - origin) * scale * new Vector3(opt.Width, opt.Height, 1) + target).ToArray();
 
             float radius = 0.1f * fighterSize.Y * opt.Scale;
             foreach (int s in new[] { 1, -1 })
