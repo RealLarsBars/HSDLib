@@ -884,24 +884,27 @@ namespace SkinTool
 
             // 3. small separate parts (claws, teeth, whiskers, eyes) move as one piece with the
             // body around them, so they stay attached to it
-            // the body pieces of a model built from pieces keep their shape (a box doesn't bend): each moves
-            // as one with the bones it follows on average, the head left out when it reaches down past the neck
-            foreach (var part in Enumerable.Range(0, Part.Max() + 1))
+            // the body pieces of a model built from pieces keep their shape (a box doesn't bend) and move
+            // together, so a face plate can't slide over the box under it: the pieces above the neck as one
+            // with the head, all others as one with the bones they follow on average, the head left out
+            bool aboveNeck(List<int> members) => !float.IsNaN(NeckY) && members.All(i => Positions[i].Y > NeckY);
+            var pieces = Enumerable.Range(0, Part.Max() + 1)
+                .Select(part => Enumerable.Range(0, n).Where(i => Part[i] == part).ToList())
+                .Where(members => members.Count > 0 && BodyPiece[members[0]])
+                .ToList();
+            foreach (var group in pieces.GroupBy(aboveNeck))
             {
-                var members = Enumerable.Range(0, n).Where(i => Part[i] == part).ToList();
-                if (members.Count == 0 || !BodyPiece[members[0]])
-                    continue;
                 var own = new float[boneCount];
-                foreach (var i in members)
+                foreach (var i in group.SelectMany(m => m))
                     for (int b = 0; b < boneCount; b++)
                         own[b] += w[i][b];
-                if (!float.IsNaN(NeckY) && HeadBone >= 0 && members.Any(i => Positions[i].Y < NeckY) && members.Any(i => Positions[i].Y > NeckY))
+                if (!group.Key && HeadBone >= 0)
                     own[Remap[HeadBone]] = 0;
                 if (own.Sum() <= 0)
                     continue;
                 Normalize(own);
-                Report += $"part {part}: {members.Count} vertices are the body, follow bone {Array.IndexOf(own, own.Max())}\n";
-                foreach (var i in members)
+                Report += $"{group.Count()} body pieces{(group.Key ? " above the neck" : "")} move as one, follow bone {Array.IndexOf(own, own.Max())}\n";
+                foreach (var i in group.SelectMany(m => m))
                     w[i] = (float[])own.Clone();
             }
 
@@ -951,13 +954,21 @@ namespace SkinTool
 
                 // the part follows the body where it's attached: weights come from around its base (the
                 // quarter of it nearest the body), not its tip, so it moves exactly as the spot it sits in
-                float Gap(int i) => body.Count > 0 ? body.Min(j => Vector3.DistanceSquared(Positions[i], Positions[j])) : 0;
+                // on a model built from pieces, a button follows the one piece it sits on (BMO's box), not an
+                // arm or leg that happens to reach near it, or it sinks into the box when that limb moves
+                var under = body;
+                if (BodyPiece.Any(b => b) && body.Count > 0)
+                {
+                    int closest = body.MinBy(j => members.Min(i => Vector3.DistanceSquared(Positions[i], Positions[j])));
+                    under = body.Where(j => Part[j] == Part[closest]).ToList();
+                }
+                float Gap(int i) => under.Count > 0 ? under.Min(j => Vector3.DistanceSquared(Positions[i], Positions[j])) : 0;
                 var basePoints = members.OrderBy(Gap).Take(Math.Max(1, members.Count / 4)).ToList();
                 var sum = new float[boneCount];
                 foreach (var i in basePoints)
                 {
-                    var near = body.Count > 0
-                        ? body.OrderBy(j => Vector3.DistanceSquared(Positions[i], Positions[j])).Take(4)
+                    var near = under.Count > 0
+                        ? under.OrderBy(j => Vector3.DistanceSquared(Positions[i], Positions[j])).Take(4)
                         : new[] { i }.AsEnumerable();
                     foreach (var j in near)
                         for (int b = 0; b < boneCount; b++)
