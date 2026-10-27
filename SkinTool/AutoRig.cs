@@ -45,6 +45,8 @@ namespace SkinTool
             public Dictionary<string, int> Roles;
             // the fighter kicks by stretching its foot bones far out (BoneMaps.StretchyFeet)
             public bool StretchyFeet;
+            // the fighter wears a long dress over its legs (BoneMaps.Dress)
+            public bool Dress;
 
             // move the model's arms and feet onto the fighter's, as modders do by hand, so it holds
             // things and steps where the fighter does (needs a bone map); false keeps the model's shape
@@ -115,6 +117,8 @@ namespace SkinTool
         // per bone, per fighter vertex and per model position
         // for a model with no real legs: where its legs end at the top and the bottom, and its middle
         // (NaN when it has real legs)
+        // the fighter's hip joints, where its legs start under a dress
+        private float LegTopY = float.NaN;
         private float HipY = float.NaN, FloorY, MiddleX, HalfWidth, MiddleZ, HalfDepth;
 
         private int[] BoneRegion;
@@ -231,6 +235,21 @@ namespace SkinTool
             float lowerTop = fighterCrotch;
             int[] legSide = null;
             bool stubby = opt.Legs switch { "separate" => false, "body" or "cut" => true, _ => modelCrotch < fighterCrotch * 0.5f };
+            // a long dress hides where the fighter's legs part (Zelda, Peach): its legs run up to the hip
+            // joints under the dress. The model's legs are whatever is below those joints once it stands in
+            // the fighter's place, so a pair of shorts bends with the thighs inside it and bare shins with
+            // the knees and shins, rather than the shins stretching over the fighter's whole leg
+            if (!stubby && opt.Dress && opt.Roles != null && new[] { "lle", "rle" }.All(opt.Roles.ContainsKey))
+            {
+                float hipHeight = (skeleton.Position(opt.Roles["lle"]).Y + skeleton.Position(opt.Roles["rle"]).Y) / 2 - fighter.Min.Y;
+                if (hipHeight / fighterSize.Y > fighterCrotch)
+                {
+                    fighterCrotch = lowerTop = Math.Min(hipHeight / fighterSize.Y, 0.7f);
+                    modelCrotch = Math.Clamp(hipHeight / (size.Y * scale * opt.Height), modelCrotch, 0.7f);
+                    LegTopY = fighter.Min.Y + hipHeight;
+                    Report += $"dress: the fighter's legs run up to its hips under the dress, at {fighterCrotch:P0} of its height\n";
+                }
+            }
             if (opt.Legs == "cut" && opt.LegCut <= 0)
                 opt.LegCut = 0.2f;
             if (stubby && opt.Conform && opt.LegCut > 0 && opt.Roles != null && new[] { "lle", "rle" }.All(opt.Roles.ContainsKey))
@@ -692,8 +711,9 @@ namespace SkinTool
                 if (p.X < centerX) left[Slice(p.Y)]++;
                 else right[Slice(p.Y)]++;
             }
-            // a triangle that reaches across the middle joins the two sides over its whole height;
-            // so does one with an edge lying on the middle, the seam of a mirrored model
+            // a triangle that reaches across the middle joins the two sides at the heights where it crosses
+            // the middle (only there: a long low-poly triangle down the inside of a pair of shorts crosses at
+            // the crotch, not at the hem); so does an edge lying on the middle, the seam of a mirrored model
             // (a single vertex there is just a toe pointing inward)
             float eps = (pts.Max(p => p.X) - pts.Min(p => p.X)) * 0.002f;
             foreach (var (a, b, c) in triangles)
@@ -703,9 +723,23 @@ namespace SkinTool
                 int onSeam = (MathF.Abs(xa) <= eps ? 1 : 0) + (MathF.Abs(xb) <= eps ? 1 : 0) + (MathF.Abs(xc) <= eps ? 1 : 0);
                 if (!(lo < -eps && hi > eps) && onSeam < 2)
                     continue;
-                int s0 = Slice(MathF.Min(pts[a].Y, MathF.Min(pts[b].Y, pts[c].Y)));
-                int s1 = Slice(MathF.Max(pts[a].Y, MathF.Max(pts[b].Y, pts[c].Y)));
-                for (int s = s0; s <= s1; s++)
+                float y0 = float.MaxValue, y1 = float.MinValue;
+                foreach (var (u, v) in new[] { (a, b), (b, c), (c, a) })
+                {
+                    float xu = pts[u].X - centerX, xv = pts[v].X - centerX;
+                    if (MathF.Abs(xu) <= eps)
+                    {
+                        y0 = MathF.Min(y0, pts[u].Y);
+                        y1 = MathF.Max(y1, pts[u].Y);
+                    }
+                    if ((xu < 0) != (xv < 0))
+                    {
+                        float y = pts[u].Y + (pts[v].Y - pts[u].Y) * (xu / (xu - xv));
+                        y0 = MathF.Min(y0, y);
+                        y1 = MathF.Max(y1, y);
+                    }
+                }
+                for (int s = Slice(y0); s <= Slice(y1); s++)
                     crossings[s]++;
             }
 
@@ -887,7 +921,9 @@ namespace SkinTool
             // the body pieces of a model built from pieces keep their shape (a box doesn't bend) and move
             // together, so a face plate can't slide over the box under it: the pieces above the neck as one
             // with the head, all others as one with the bones they follow on average, the head left out
-            bool aboveNeck(List<int> members) => !float.IsNaN(NeckY) && members.All(i => Positions[i].Y > NeckY);
+            // (a face that dips a little below the neck line is still the head; BMO's box, a good part of it
+            // below the line, is the body)
+            bool aboveNeck(List<int> members) => !float.IsNaN(NeckY) && members.Count(i => Positions[i].Y < NeckY) * 4 < members.Count;
             var pieces = Enumerable.Range(0, Part.Max() + 1)
                 .Select(part => Enumerable.Range(0, n).Where(i => Part[i] == part).ToList())
                 .Where(members => members.Count > 0 && BodyPiece[members[0]])
@@ -1112,26 +1148,50 @@ namespace SkinTool
             RigidPart = new bool[n];
             BodyPiece = new bool[n];
             int largest = sizes.Count > 0 ? sizes.Max() : 0;
-            if (largest >= n * opt.RigidPartShare)
+            int small = Enumerable.Range(0, n).Count(i => sizes[Part[i]] < n * opt.RigidPartShare);
+            if (largest >= n * opt.RigidPartShare && small * 2 < n)
             {
                 for (int i = 0; i < n; i++)
                     RigidPart[i] = sizes[Part[i]] < n * opt.RigidPartShare;
                 return;
             }
 
-            // no piece is big enough to be the body: the model is built from pieces that touch (BMO's box,
-            // face plate, arms and legs). Each point that touches another piece is joined to it, so weights
+            // no piece is big enough to be the body, or most of the model is pieces too small to count: it
+            // is built from pieces that touch (BMO's box, face plate, arms and legs; Peggy's arms, shorts
+            // and shins). Each point that touches another piece is joined to it, so weights
             // blend across the joins and an arm stays on the box when it bends; only the small pieces
             // (buttons, screws) move as one
             JoinTouchingParts(adj, triangles);
             var bodyCount = new int[count];
-            for (int i = 0; i < n; i++)
-                if (ModelRegion[i] == Body)
-                    bodyCount[Part[i]]++;
+            var lowCount = new int[count];
             for (int i = 0; i < n; i++)
             {
-                RigidPart[i] = sizes[Part[i]] < largest * 0.25f;
-                BodyPiece[i] = !RigidPart[i] && bodyCount[Part[i]] * 2 > sizes[Part[i]];
+                if (ModelRegion[i] == Body)
+                    bodyCount[Part[i]]++;
+                float legTop = float.IsNaN(HipY) ? LegTopY : HipY;
+                if (!float.IsNaN(legTop) && Positions[i].Y < legTop)
+                    lowCount[Part[i]]++;
+            }
+            // a small piece is rigid (a button), but not a leg or arm that reaches a good way along the
+            // limb (Peggy's legs below her shorts): that bends at the knee
+            var limbCount = new int[count];
+            var low = Enumerable.Repeat(float.MaxValue, count).ToArray();
+            var high = Enumerable.Repeat(float.MinValue, count).ToArray();
+            float height = Positions.Max(q => q.Y) - Positions.Min(q => q.Y);
+            for (int i = 0; i < n; i++)
+            {
+                if (ModelRegion[i] != Body)
+                    limbCount[Part[i]]++;
+                low[Part[i]] = MathF.Min(low[Part[i]], Positions[i].Y);
+                high[Part[i]] = MathF.Max(high[Part[i]], Positions[i].Y);
+            }
+            bool Limb(int part) => limbCount[part] * 2 > sizes[part] && high[part] - low[part] > height * 0.15f;
+            for (int i = 0; i < n; i++)
+            {
+                RigidPart[i] = sizes[Part[i]] < largest * 0.25f && !Limb(Part[i]);
+                // a body piece keeps its shape only when it sits above the legs (BMO's box); one reaching
+                // down into them (Peggy's shorts) bends with them, or the legs come out from under it
+                BodyPiece[i] = !RigidPart[i] && bodyCount[Part[i]] * 2 > sizes[Part[i]] && lowCount[Part[i]] * 10 <= sizes[Part[i]];
             }
             Report += $"the model is {count} separate pieces: pieces that touch bend together\n";
         }

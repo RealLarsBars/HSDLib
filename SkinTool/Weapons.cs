@@ -40,6 +40,19 @@ namespace SkinTool
             ["Gn"] = new[] { W("sword", "Sword", 1, 0) },
         };
 
+        // other shapes the fighter turns into, which the game shows instead of the body: Samus curling up
+        // and her morph ball, Yoshi's egg, Kirby's stones. A skin keeps the costume's own, as it does a
+        // weapon nobody uploaded, or the fighter vanishes while in them
+        static readonly Dictionary<string, Weapon[]> Forms = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Ss"] = new[] { W("ball", "Morph ball", 0, 1, 2) },
+            ["Ys"] = new[] { W("egg", "Egg", 0, 1) },
+            ["Kb"] = new[] { W("stone", "Stone", 0, 2, 3, 4, 5, 6) },
+        };
+
+        static IEnumerable<Weapon> WithForms(string code) =>
+            For(code).Concat(code != null && Forms.TryGetValue(code, out var f) ? f : Array.Empty<Weapon>());
+
         public static Weapon[] For(string code) => code != null && Table.TryGetValue(code, out var w) ? w : Array.Empty<Weapon>();
 
         /// <summary>A replacement weapon model, and whether to turn it end for end.</summary>
@@ -58,6 +71,8 @@ namespace SkinTool
             public List<GX_Vertex> Vertices = new(); // a triangle list, relative to Joint
             public GXAttribName[] Attrs;
             public POBJ_FLAG Cull;
+            // a kept mesh that bends with several bones (Samus curling up) goes back in whole
+            public HSD_DOBJ Original;
         }
 
         /// <summary>The high-detail slots of each place a group choice shows, and the low-detail ones.</summary>
@@ -81,7 +96,7 @@ namespace SkinTool
         public static HashSet<int> AllSlots(SBM_FighterData data, string code)
         {
             var set = new HashSet<int>();
-            foreach (var w in For(code))
+            foreach (var w in WithForms(code))
             {
                 var (high, low) = Places(data, w);
                 foreach (var s in high.Concat(low))
@@ -101,7 +116,7 @@ namespace SkinTool
                 .SelectMany(j => j.Dobj.List.Select(d => (dobj: d, joint: sk.IndexOf(j)))).ToList();
             var parts = new List<Part>();
 
-            foreach (var w in For(code))
+            foreach (var w in WithForms(code))
             {
                 var (high, _) = Places(data, w);
                 foreach (var place in high.Where(p => p.Length > 0))
@@ -121,6 +136,8 @@ namespace SkinTool
         static Part Keep(int slot, HSD_DOBJ dobj, int joint)
         {
             var pobj = dobj.Pobj;
+            if (pobj.List.Any(p => p.Flags.HasFlag(POBJ_FLAG.ENVELOPE)))
+                return new Part { Slot = slot, Joint = joint, Original = dobj };
             var attrs = pobj.ToGXAttributes().Select(a => a.AttributeName)
                 .Where(a => a != GXAttribName.GX_VA_NULL && a != GXAttribName.GX_VA_PNMTXIDX);
             return new Part

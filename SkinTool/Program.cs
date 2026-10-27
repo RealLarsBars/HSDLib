@@ -476,6 +476,7 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                 opt.Roles = map;
             }
             opt.StretchyFeet = BoneMaps.StretchyFeet.Contains(BoneMaps.Code(dats[0]) ?? "");
+            opt.Dress = BoneMaps.Dress.Contains(BoneMaps.Code(dats[0]) ?? "");
             if (opt.HasTail)
             {
                 var weighted = BoneMaps.Weighted(firstRoot);
