@@ -112,3 +112,11 @@ Other commands:
 - `preview ... --anims <Pl.dat> <PlAJ.dat> --poses AttackAirB@0.25,AttackAirF@0.3`: draws chosen moves.
 - `inspect <costume.dat>`, `slots <Pl**.dat>`: list joints, meshes and visibility tables.
 - `preview ... --slots 55,56` draws only those mesh slots, to see what a slot holds.
+
+## Tail
+
+`--tail yes` (or `tail = yes` in skin.txt) says the model has a tail. Whatever sticks out behind the
+model, at heights where it reaches much further back than usual, follows the fighter's tail bones from
+root to tip (Fox, Falco, Pikachu, Pichu, Mewtwo, Yoshi; `BoneMaps.Tails`), blending in from the body at
+the root. Without it, everything behind the model follows the body, as before.
+

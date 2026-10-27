@@ -13,7 +13,7 @@ namespace SkinTool
         const string Usage =
 @"skintool build --model <model.obj/.fbx/.dae|model.zip> --dat <costume.dat> [--dat <costume.dat> ...] --out <folder|out.zip>
                [--fighter <Pl**.dat>] [--bones 41,22,...] [--scale 1.0] [--width 1.0] [--height 1.0] [--rotate 0 | x,y,z] [--textures <costume.dat>=<folder> ...]
-               [--legs auto|separate|body|cut] [--arms auto|fighter|body] [--neck auto|none|0.6] [--leg-band 0.3] [--keep-shape]
+               [--legs auto|separate|body|cut] [--arms auto|fighter|body] [--neck auto|none|0.6] [--tail yes|no] [--leg-band 0.3] [--keep-shape]
                [--pick <model in the zip or folder>] [--weapon <name>=<model|zip> [--weapon-pick <name>=<model>] [--weapon-flip <name>] ...]
                [--preview <out.png> [--anims <Pl**AJ.dat>]] [--overlay <out.png> [--fit-only]] [--portraits <folder>]
 skintool models <zip|folder> --out <folder>
@@ -37,6 +37,8 @@ build    Swaps the model into every costume given, keeping each costume's skelet
          --arms fighter always moves its arms onto the fighter's, body keeps them mostly with the body.
          --neck is where the head starts, as a share of the model's height: everything above follows the
          head bone alone, so a wide head or face moves as one piece. auto finds a neck, none turns it off.
+         --tail yes says the model has a tail: what sticks out behind it follows the fighter's tail bones
+         (Fox, Falco, Pikachu, Pichu, Mewtwo, Yoshi); without it, everything behind follows the body.
          The same rules can come with the model in a skin.txt next to the OBJ (""legs = body"").
          --overlay draws the fitted model over the first costume, to check its size; with --fit-only
          that's all it does (no costumes are written, --out isn't needed).
@@ -123,6 +125,13 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
             return v >= 0.5f && v <= 2f ? v : throw new Exception($"{name} must be between 0.5 and 2, not {value}");
         }
 
+        static bool YesNo(string name, string value) => value.ToLowerInvariant() switch
+        {
+            "yes" or "true" or "1" => true,
+            "no" or "false" or "0" => false,
+            _ => throw new Exception($"{name} is yes or no, not {value}"),
+        };
+
         // degrees to turn the model: one number turns it round (facing), x,y,z also tips it over
         static void Rotate(AutoRig.Options opt, string value)
         {
@@ -181,6 +190,7 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                     case "rotate": Rotate(opt, value); break;
                     case "leg-band": opt.LegBand = float.Parse(value, CultureInfo.InvariantCulture); break;
                     case "neck": opt.Neck = Neck(value); break;
+                    case "tail": opt.HasTail = YesNo("tail", value); break;
                     default: throw new Exception($"skin.txt: unknown rule {name} (legs, arms, neck, scale, width, height, rotate, leg-band)");
                 }
                 Console.WriteLine($"rule from skin.txt: {name} = {value}");
@@ -285,6 +295,7 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                     case "--legs": opt.Legs = Rule("legs", Next(), "auto", "separate", "body", "cut"); break;
                     case "--arms": opt.Arms = Rule("arms", Next(), "auto", "fighter", "body"); break;
                     case "--neck": opt.Neck = Neck(Next()); break;
+                    case "--tail": opt.HasTail = YesNo("--tail", Next()); break;
                     case "--leg-band": opt.LegBand = float.Parse(Next(), CultureInfo.InvariantCulture); break;
                     case "--cut-legs": opt.LegCut = float.Parse(Next(), CultureInfo.InvariantCulture); break;
                     case "--width": opt.Width = Stretch("width", Next()); break;
@@ -465,6 +476,19 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                 opt.Roles = map;
             }
             opt.StretchyFeet = BoneMaps.StretchyFeet.Contains(BoneMaps.Code(dats[0]) ?? "");
+            if (opt.HasTail)
+            {
+                var weighted = BoneMaps.Weighted(firstRoot);
+                var tail = BoneMaps.Tails.GetValueOrDefault(BoneMaps.Code(dats[0]) ?? "", Array.Empty<int>()).Where(weighted.Contains).ToArray();
+                if (tail.Length == 0)
+                    Console.WriteLine("tail: this fighter has no tail to move it with; it follows the body");
+                else
+                {
+                    opt.TailBones = tail;
+                    if (opt.Bones != null)
+                        opt.Bones = opt.Bones.Concat(tail).Distinct().ToArray();
+                }
+            }
             var rig = AutoRig.Run(obj, fighter, skeleton, opt);
             Console.Write(rig.Report);
             if (overlayPng != null)

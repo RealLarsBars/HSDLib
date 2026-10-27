@@ -47,6 +47,17 @@ namespace SkinTool
             ["Zd"] = "face=89 body=67 lsh=72 lel=73 lha=76 rsh=100 rel=101 rha=104 lle=5 lkn=7 lfb=9 lff=10 rle=11 rkn=13 rfb=15 rff=16",
         };
 
+        /// <summary>The fighter's tail bones, root to tip, for a model that has a tail of its own.</summary>
+        public static readonly Dictionary<string, int[]> Tails = new()
+        {
+            ["Fx"] = new[] { 17, 18, 19, 20 },
+            ["Fc"] = new[] { 17 },
+            ["Pk"] = new[] { 47, 48, 49, 50 },
+            ["Pc"] = new[] { 43 },
+            ["Mt"] = new[] { 20, 21, 22, 23, 24, 25, 26 },
+            ["Ys"] = new[] { 19, 20, 21 },
+        };
+
         /// <summary>
         /// Fighters that kick by stretching their foot bones far out rather than swinging a leg: Jigglypuff's
         /// feet scale to 3x in fair and bair (Kirby's only to 1.5x, which bending the body copes with).
