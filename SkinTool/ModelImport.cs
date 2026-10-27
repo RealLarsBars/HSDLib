@@ -15,7 +15,7 @@ namespace SkinTool
     /// </summary>
     static class ModelImport
     {
-        public static readonly string[] Extensions = { ".obj", ".fbx", ".dae", ".glb", ".gltf", ".3ds" };
+        public static readonly string[] Extensions = { ".obj", ".fbx", ".dae", ".glb", ".gltf", ".3ds", ".smd" };
 
         static ModelImport()
         {

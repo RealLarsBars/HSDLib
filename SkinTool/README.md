@@ -15,10 +15,14 @@ What `build` does, in the order the usual Blender + HSDRaw tutorial does it by h
 
 1. **Fit**: scales the model to sit on the fighter's skeleton (between "as tall as the fighter" and
    "as wide as its arm span", but never wider than the arm span; `--scale` adjusts it, `--rotate`
-   turns a model that faces the wrong way).
+   turns a model that faces the wrong way; `--rotate x,y,z` also stands up one that lies down or is
+   upside down, in degrees about each axis).
 2. **Weights** (the Data Transfer step): copies weights from the fighter's own mesh, onto the bones
    modders weight custom skins to (the fighter's bone map in `BoneMaps.cs`: face, body, shoulders,
-   elbows, hands, legs, knees and feet). Weights only come from the matching part of the fighter:
+   elbows, hands, legs, knees and feet). Where a mapped limb bone isn't one the costume's own model
+   follows, the joint stacked in the same spot that it does follow is used instead (only one of a
+   stacked pair bends: Yoshi's right hip, Zelda's hips), or else the joint above it (a helper the game
+   moves on its own, like Samus's cannon muzzle). Weights only come from the matching part of the fighter:
    the model's body takes the fighter's body, its arms (whatever sticks out sideways) the arms, and
    anything under its crotch the legs. A model with stubby legs gets its feet on the fighter's feet
    and its body on the hips. Arms that sit far from the fighter's arms partly stay with the body, so
@@ -62,6 +66,13 @@ area grows past 4x, which the original costumes and a well fitted model never ge
 `warning:` line naming the part and the move (`stretch <costume.dat> <Pl**.dat> <Pl**AJ.dat>` runs it
 on any costume).
 
+**Character select portraits.** `--portraits <folder>` (with `--fighter` and `--anims`) draws each
+costume as a 136x188 portrait with a see-through background, as community skins ship them
+(`PlFxNr_csp.png`, also put next to the costumes): the fighter standing (Wait1), turned towards the
+camera, cropped to the head and upper body, flat lit, with a soft drop shadow up and to the left.
+Peach's items and Ganondorf's sword stay hidden. `portrait <out.png> <costume.dat> <Pl**.dat>
+<Pl**AJ.dat> [--anim Wait1] [--at 0] [--yaw -30]` draws one in another pose.
+
 **Rules per model.** When the automatic choice is wrong, say how the model works, on the command
 line or in a `skin.txt` next to the OBJ (or in the zip):
 
@@ -96,6 +107,16 @@ Other commands:
 - `preview <out.png> <costume.dat>... [--anims Pl**.dat Pl**AJ.dat]`: renders each costume in test
   poses, or in the fighter's real animations when given its data and animation files.
 - `preview ... --bones` colours the model by the bones it follows.
-- `bonemap <costume.dat>`: where the fighter's bone map bones sit (left and right should mirror).
+- `bonemap <costume.dat>`: where the fighter's bone map bones sit (left and right should mirror), and
+  which of them the costume's model doesn't follow (and what's used instead).
+- `preview ... --anims <Pl.dat> <PlAJ.dat> --poses AttackAirB@0.25,AttackAirF@0.3`: draws chosen moves.
 - `inspect <costume.dat>`, `slots <Pl**.dat>`: list joints, meshes and visibility tables.
 - `preview ... --slots 55,56` draws only those mesh slots, to see what a slot holds.
+
+## Tail
+
+`--tail yes` (or `tail = yes` in skin.txt) says the model has a tail. Whatever sticks out behind the
+model, at heights where it reaches much further back than usual, follows the fighter's tail bones from
+root to tip (Fox, Falco, Pikachu, Pichu, Mewtwo, Yoshi; `BoneMaps.Tails`), blending in from the body at
+the root. Without it, everything behind the model follows the body, as before.
+

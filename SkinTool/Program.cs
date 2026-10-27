@@ -12,16 +12,17 @@ namespace SkinTool
     {
         const string Usage =
 @"skintool build --model <model.obj/.fbx/.dae|model.zip> --dat <costume.dat> [--dat <costume.dat> ...] --out <folder|out.zip>
-               [--fighter <Pl**.dat>] [--bones 41,22,...] [--scale 1.0] [--width 1.0] [--height 1.0] [--rotate 0] [--textures <costume.dat>=<folder> ...]
-               [--legs auto|separate|body|cut] [--arms auto|fighter|body] [--neck auto|none|0.6] [--leg-band 0.3] [--keep-shape]
+               [--fighter <Pl**.dat>] [--bones 41,22,...] [--scale 1.0] [--width 1.0] [--height 1.0] [--rotate 0 | x,y,z] [--textures <costume.dat>=<folder> ...]
+               [--legs auto|separate|body|cut] [--arms auto|fighter|body] [--neck auto|none|0.6] [--tail yes|no] [--leg-band 0.3] [--keep-shape]
                [--pick <model in the zip or folder>] [--weapon <name>=<model|zip> [--weapon-pick <name>=<model>] [--weapon-flip <name>] ...]
-               [--preview <out.png> [--anims <Pl**AJ.dat>]] [--overlay <out.png> [--fit-only]]
+               [--preview <out.png> [--anims <Pl**AJ.dat>]] [--overlay <out.png> [--fit-only]] [--portraits <folder>]
 skintool models <zip|folder> --out <folder>
 skintool weapons <costume.dat>
 skintool stretch <costume.dat> <Pl**.dat> <Pl**AJ.dat>
+skintool portrait <out.png> <costume.dat> <Pl**.dat> <Pl**AJ.dat> [--anim Wait1] [--at 0] [--yaw -30]
 skintool inspect <costume.dat>
 skintool check <original.dat> <skin.dat>
-skintool preview <out.png> <costume.dat> [<costume.dat> ...] [--anims <Pl**.dat> <Pl**AJ.dat>] [--bones]
+skintool preview <out.png> <costume.dat> [<costume.dat> ...] [--anims <Pl**.dat> <Pl**AJ.dat> [--poses AttackAirB@0.25,...]] [--bones]
 skintool bonemap <costume.dat>
 
 build    Swaps the model into every costume given, keeping each costume's skeleton.
@@ -36,6 +37,8 @@ build    Swaps the model into every costume given, keeping each costume's skelet
          --arms fighter always moves its arms onto the fighter's, body keeps them mostly with the body.
          --neck is where the head starts, as a share of the model's height: everything above follows the
          head bone alone, so a wide head or face moves as one piece. auto finds a neck, none turns it off.
+         --tail yes says the model has a tail: what sticks out behind it follows the fighter's tail bones
+         (Fox, Falco, Pikachu, Pichu, Mewtwo, Yoshi); without it, everything behind follows the body.
          The same rules can come with the model in a skin.txt next to the OBJ (""legs = body"").
          --overlay draws the fitted model over the first costume, to check its size; with --fit-only
          that's all it does (no costumes are written, --out isn't needed).
@@ -43,6 +46,8 @@ build    Swaps the model into every costume given, keeping each costume's skelet
          --weapon swaps one of the fighter's weapons (pan, sword, hammer; see weapons) for another model,
          fitted over the original; --weapon-flip turns it end for end. Weapons not given keep the costume's own.
          --preview renders the first costume, in the fighter's real animations with --anims (needs --fighter).
+         --portraits draws a character select portrait of each costume (136x188, <costume>_csp.png) into
+         the folder and next to the costumes (needs --fighter and --anims).
 models   Lists the models in a zip or folder and draws each one (<folder>/<n>.png), to pick from.
 weapons  Lists the weapons a fighter holds, by the names --weapon takes.
 stretch  Poses a finished costume in the fighter's moves and warns about parts that get pulled apart
@@ -74,6 +79,7 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                     case "models": return Models(args.Skip(1).ToArray());
                     case "weapons": return ListWeapons(args[1]);
                     case "stretch": return Stretch(args);
+                    case "portrait": return Portrait(args);
                     default:
                         Console.WriteLine(Usage);
                         return 1;
@@ -119,6 +125,25 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
             return v >= 0.5f && v <= 2f ? v : throw new Exception($"{name} must be between 0.5 and 2, not {value}");
         }
 
+        static bool YesNo(string name, string value) => value.ToLowerInvariant() switch
+        {
+            "yes" or "true" or "1" => true,
+            "no" or "false" or "0" => false,
+            _ => throw new Exception($"{name} is yes or no, not {value}"),
+        };
+
+        // degrees to turn the model: one number turns it round (facing), x,y,z also tips it over
+        static void Rotate(AutoRig.Options opt, string value)
+        {
+            var parts = value.Split(',').Select(v => float.Parse(v.Trim(), CultureInfo.InvariantCulture)).ToArray();
+            if (parts.Length == 1)
+                opt.RotateY = parts[0];
+            else if (parts.Length == 3)
+                (opt.RotateX, opt.RotateY, opt.RotateZ) = (parts[0], parts[1], parts[2]);
+            else
+                throw new Exception($"rotate takes one angle or x,y,z, not {value}");
+        }
+
         // where the head starts: auto (find the neck), none, or a share of the model's height (0.2 to 0.95)
         static float Neck(string value)
         {
@@ -162,9 +187,10 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                     case "scale": opt.Scale = float.Parse(value, CultureInfo.InvariantCulture); break;
                     case "width": opt.Width = Stretch(name, value); break;
                     case "height": opt.Height = Stretch(name, value); break;
-                    case "rotate": opt.RotateY = float.Parse(value, CultureInfo.InvariantCulture); break;
+                    case "rotate": Rotate(opt, value); break;
                     case "leg-band": opt.LegBand = float.Parse(value, CultureInfo.InvariantCulture); break;
                     case "neck": opt.Neck = Neck(value); break;
+                    case "tail": opt.HasTail = YesNo("tail", value); break;
                     default: throw new Exception($"skin.txt: unknown rule {name} (legs, arms, neck, scale, width, height, rotate, leg-band)");
                 }
                 Console.WriteLine($"rule from skin.txt: {name} = {value}");
@@ -243,7 +269,7 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
 
         static int Build(string[] args)
         {
-            string model = null, outDir = null, fighterDat = null, previewPng = null, animDat = null, pick = null, overlayPng = null;
+            string model = null, outDir = null, fighterDat = null, previewPng = null, animDat = null, pick = null, overlayPng = null, portraitDir = null;
             bool fitOnly = false;
             var weaponFiles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var weaponPicks = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -269,14 +295,16 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                     case "--legs": opt.Legs = Rule("legs", Next(), "auto", "separate", "body", "cut"); break;
                     case "--arms": opt.Arms = Rule("arms", Next(), "auto", "fighter", "body"); break;
                     case "--neck": opt.Neck = Neck(Next()); break;
+                    case "--tail": opt.HasTail = YesNo("--tail", Next()); break;
                     case "--leg-band": opt.LegBand = float.Parse(Next(), CultureInfo.InvariantCulture); break;
                     case "--cut-legs": opt.LegCut = float.Parse(Next(), CultureInfo.InvariantCulture); break;
                     case "--width": opt.Width = Stretch("width", Next()); break;
                     case "--height": opt.Height = Stretch("height", Next()); break;
-                    case "--rotate": opt.RotateY = float.Parse(Next(), CultureInfo.InvariantCulture); break;
+                    case "--rotate": Rotate(opt, Next()); break;
                     case "--pick": pick = Next(); break;
                     case "--overlay": overlayPng = Next(); break;
                     case "--fit-only": fitOnly = true; break;
+                    case "--portraits": portraitDir = Next(); break;
                     case "--weapon":
                         var w = Next().Split('=', 2);
                         if (w.Length != 2) throw new Exception("--weapon takes name=model");
@@ -357,6 +385,21 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                         Console.WriteLine($"warning: {warning}");
                 }
 
+                // a character select portrait of each costume, next to it (PlFxNr_csp.png) and in --portraits
+                if (portraitDir != null && animDat != null && fighterDat != null && !fitOnly)
+                {
+                    Directory.CreateDirectory(portraitDir);
+                    var pose = PortraitPose(fighterDat, animDat);
+                    var data = Slots.Load(fighterDat);
+                    foreach (var dat in dats)
+                    {
+                        var name = Path.GetFileNameWithoutExtension(dat) + "_csp.png";
+                        Preview.Portrait(Path.Combine(outDir, Path.GetFileName(dat)), data, pose, Path.Combine(portraitDir, name));
+                        File.Copy(Path.Combine(portraitDir, name), Path.Combine(outDir, name), true);
+                        Console.WriteLine($"portrait {name}");
+                    }
+                }
+
                 if (zipOut != null && !fitOnly)
                 {
                     ModelZip.Pack(outDir, zipOut);
@@ -381,6 +424,33 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
             return 0;
         }
 
+        // the pose character select portraits are drawn in, unless one is given: standing (Pikachu and the
+        // Ice Climbers call it Wait)
+        static readonly (string Name, float At)[] PortraitPoses = { ("Wait1", 0f), ("Wait", 0f) };
+
+        static Preview.Pose PortraitPose(string fighterDat, string animDat) =>
+            PortraitPoses.Select(p => Animations.Load(fighterDat, animDat, new[] { p }).FirstOrDefault()).FirstOrDefault(p => p != null)
+            ?? new Preview.Pose { Name = "bind" };
+
+        /// <summary>skintool portrait out.png costume.dat Pl**.dat Pl**AJ.dat [--anim Wait1] [--at 0] [--yaw -30]</summary>
+        static int Portrait(string[] args)
+        {
+            string name = null;
+            float at = 0, yaw = -30;
+            for (int i = 5; i + 1 < args.Length; i += 2)
+                switch (args[i])
+                {
+                    case "--anim": name = args[i + 1]; break;
+                    case "--at": at = float.Parse(args[i + 1], CultureInfo.InvariantCulture); break;
+                    case "--yaw": yaw = float.Parse(args[i + 1], CultureInfo.InvariantCulture); break;
+                }
+            var pose = name == null ? PortraitPose(args[3], args[4])
+                : Animations.Load(args[3], args[4], new[] { (name, at) }).FirstOrDefault() ?? throw new Exception($"no animation called {name}");
+            Preview.Portrait(args[2], Slots.Load(args[3]), pose, args[1], yaw);
+            Console.WriteLine($"wrote {args[1]}");
+            return 0;
+        }
+
         static void BuildCostumes(string model, List<string> dats, string outDir, string fighterDat, Dictionary<string, string> textureFolders, AutoRig.Options opt, Dictionary<string, Weapons.Upload> uploads, string overlayPng = null, bool fitOnly = false)
         {
             if (!fitOnly)
@@ -398,12 +468,26 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
             var skeleton = new Skeleton(firstRoot);
             var fighter = new FighterMesh(firstRoot, skeleton);
             // weight to the bones modders use for this fighter, when there's a map for it
-            var map = BoneMaps.Get(BoneMaps.Code(dats[0]));
+            var map = BoneMaps.Get(BoneMaps.Code(dats[0]), firstRoot);
             if (opt.Bones == null && map != null)
             {
-                opt.Bones = map.Values.ToArray();
+                opt.Bones = map.Values.Distinct().ToArray();
                 opt.Head = map.GetValueOrDefault("face", map.GetValueOrDefault("body", -1));
                 opt.Roles = map;
+            }
+            opt.StretchyFeet = BoneMaps.StretchyFeet.Contains(BoneMaps.Code(dats[0]) ?? "");
+            if (opt.HasTail)
+            {
+                var weighted = BoneMaps.Weighted(firstRoot);
+                var tail = BoneMaps.Tails.GetValueOrDefault(BoneMaps.Code(dats[0]) ?? "", Array.Empty<int>()).Where(weighted.Contains).ToArray();
+                if (tail.Length == 0)
+                    Console.WriteLine("tail: this fighter has no tail to move it with; it follows the body");
+                else
+                {
+                    opt.TailBones = tail;
+                    if (opt.Bones != null)
+                        opt.Bones = opt.Bones.Concat(tail).Distinct().ToArray();
+                }
             }
             var rig = AutoRig.Run(obj, fighter, skeleton, opt);
             Console.Write(rig.Report);

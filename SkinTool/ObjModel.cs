@@ -25,6 +25,8 @@ namespace SkinTool
             public Corner A, B, C;
             public string Material;
             public string Object;
+            // part of a cartoon outline shell: drawn from one side only (see Outlines)
+            public bool Outline;
         }
 
         public readonly List<Vector3> Positions = new();
@@ -39,8 +41,13 @@ namespace SkinTool
 
         public static ObjModel Load(string path)
         {
-            if (!path.EndsWith(".obj", StringComparison.OrdinalIgnoreCase))
-                return ModelImport.Load(path);
+            var model = path.EndsWith(".obj", StringComparison.OrdinalIgnoreCase) ? LoadObj(path) : ModelImport.Load(path);
+            Outlines.Mark(model);
+            return model;
+        }
+
+        private static ObjModel LoadObj(string path)
+        {
 
             var model = new ObjModel { Directory = Path.GetDirectoryName(Path.GetFullPath(path)) };
             string material = null;
@@ -229,6 +236,7 @@ namespace SkinTool
                         C = new Corner { Position = center, UV = e.to.UV, Normal = n },
                         Material = e.tri.Material,
                         Object = e.tri.Object,
+                        Outline = e.tri.Outline,
                     });
                 closed++;
             }

@@ -18,8 +18,9 @@ namespace SkinTool
             // stretch the fitted model sideways or upwards only (from the floor, about its middle)
             public float Width = 1, Height = 1;
 
-            // degrees to turn the model around the vertical axis before fitting
-            public float RotateY = 0;
+            // degrees to turn the model around the vertical axis before fitting, and to tip it over
+            // first (a model lying down or upside down): X leans it forward, Z sideways
+            public float RotateY = 0, RotateX = 0, RotateZ = 0;
 
             // fighter vertices blended per model vertex
             public int Neighbours = 8;
@@ -42,6 +43,8 @@ namespace SkinTool
 
             // the bone map's roles (face, body, lsh, rha, ...), which say outright which bones are arms and legs
             public Dictionary<string, int> Roles;
+            // the fighter kicks by stretching its foot bones far out (BoneMaps.StretchyFeet)
+            public bool StretchyFeet;
 
             // move the model's arms and feet onto the fighter's, as modders do by hand, so it holds
             // things and steps where the fighter does (needs a bone map); false keeps the model's shape
@@ -69,6 +72,11 @@ namespace SkinTool
             // follows the head bone alone, so a wide head or face is never read as arms and moves as one
             // piece. NaN works it out (a neck narrower than the head above it), 0 or less: no such line
             public float Neck = float.NaN;
+
+            // the model has a tail: the part sticking out behind it follows the fighter's tail bones, root
+            // to tip (BoneMaps.Tails); otherwise everything behind follows the body
+            public int[] TailBones;
+            public bool HasTail;
         }
 
         public Vector3[] Positions;
@@ -87,6 +95,9 @@ namespace SkinTool
         // the fitted height of the neck line (NaN when there's none)
         public float NeckY = float.NaN;
         private int HeadBone = -1;
+
+        // per model position, whether it's on the model's tail
+        private bool[] Tail;
 
         // detail bone -> the bone that takes its weight
         private int[] Remap;
@@ -160,7 +171,9 @@ namespace SkinTool
 
         private void Fit(ObjModel model, FighterMesh fighter, Skeleton skeleton, Options opt)
         {
-            var rot = Matrix4x4.CreateRotationY(opt.RotateY * MathF.PI / 180);
+            var rot = Matrix4x4.CreateRotationX(opt.RotateX * MathF.PI / 180)
+                * Matrix4x4.CreateRotationZ(opt.RotateZ * MathF.PI / 180)
+                * Matrix4x4.CreateRotationY(opt.RotateY * MathF.PI / 180);
             var pts = model.Positions.Select(p => Vector3.Transform(p, rot)).ToArray();
 
             var min = new Vector3(float.MaxValue);
@@ -375,6 +388,9 @@ namespace SkinTool
                     if (opt.Roles.TryGetValue(side + "el", out int el))
                         chain.Add(skeleton.Position(el));
                     chain.Add(skeleton.Position(ha));
+                    // a hand that's the elbow itself (Samus's cannon) adds no length
+                    if (chain.Count > 2 && Vector3.Distance(chain[^1], chain[^2]) < 1e-3f)
+                        chain.RemoveAt(chain.Count - 1);
                     // past the wrist to the fingertips, as far as the fighter's arm reaches
                     float past = MathF.Max(a.fTip - MathF.Abs(chain[^1].X - fcx), 0);
                     var dir = Vector3.Normalize(chain[^1] - chain[^2]);
@@ -596,6 +612,61 @@ namespace SkinTool
             }
         }
 
+        /// <summary>
+        /// Finds the model's tail the way arms are found, but backwards: at the heights where the model reaches
+        /// much further behind its middle than it usually does, what sticks out is tail. Its weights run
+        /// along the fighter's tail bones by how far out each point is, blending in from the body at the root.
+        /// </summary>
+        private void TailWeights(float[][] w, int boneCount, int[] chain)
+        {
+            int n = Positions.Length;
+            float minY = Positions.Min(p => p.Y), maxY = Positions.Max(p => p.Y);
+            float h = MathF.Max(maxY - minY, 1e-4f);
+            float cx = (Positions.Min(p => p.X) + Positions.Max(p => p.X)) / 2;
+            float halfW = (Positions.Max(p => p.X) - Positions.Min(p => p.X)) / 2;
+            var zs = Positions.Select(p => p.Z).OrderBy(z => z).ToArray();
+            float cz = zs[zs.Length / 2];
+
+            const int slices = 24;
+            int Slice(float y) => Math.Clamp((int)((y - minY) / h * slices), 0, slices - 1);
+            // how far behind the middle the model reaches at each height, near the middle (not the arms)
+            var reach = new float[slices];
+            for (int i = 0; i < n; i++)
+                if (MathF.Abs(Positions[i].X - cx) < halfW * 0.5f)
+                {
+                    int s = Slice(Positions[i].Y);
+                    reach[s] = MathF.Max(reach[s], cz - Positions[i].Z);
+                }
+            var filled = reach.Where(r => r > 0).OrderBy(r => r).ToArray();
+            if (filled.Length == 0)
+                return;
+            float typical = filled[filled.Length / 2];
+            float root = typical * 1.1f;
+            var tail = Enumerable.Range(0, n).Where(i => reach[Slice(Positions[i].Y)] > typical * 1.35f
+                && MathF.Abs(Positions[i].X - cx) < halfW * 0.5f && cz - Positions[i].Z > root).ToList();
+            if (tail.Count < n * 0.01f)
+            {
+                Report += "tail: none found behind the model; it follows the body\n";
+                return;
+            }
+
+            float tip = tail.Max(i => cz - Positions[i].Z);
+            foreach (var i in tail)
+            {
+                float u = Math.Clamp((cz - Positions[i].Z - root) / MathF.Max(tip - root, 1e-4f), 0, 1);
+                float f = u * (chain.Length - 1);
+                int a = (int)MathF.Floor(f), b = Math.Min(a + 1, chain.Length - 1);
+                var own = new float[boneCount];
+                own[chain[a]] += 1 - (f - a);
+                own[chain[b]] += f - a;
+                float k = SmoothStep(0, 0.15f, u);
+                for (int x = 0; x < boneCount; x++)
+                    w[i][x] = (1 - k) * w[i][x] + k * own[x];
+                Tail[i] = true;
+            }
+            Report += $"tail: {tail.Count} vertices behind the model follow the tail bones {string.Join(",", chain)}\n";
+        }
+
         private static float SmoothStep(float a, float b, float x)
         {
             float t = Math.Clamp((x - a) / (b - a), 0, 1);
@@ -746,6 +817,13 @@ namespace SkinTool
                         w[i][b] = k * w[i][b] + (1 - k) * around[b];
             }
 
+            // a fighter that kicks by stretching its foot bones far out (Jigglypuff): the bottom of the
+            // model's legs, off to the side (not the middle of a round belly), is the foot, and follows the
+            // foot bones alone, or a kick barely moves it
+            bool feetOnly = opt.StretchyFeet;
+            bool Foot(int i) => feetOnly && !float.IsNaN(HipY) && (ModelRegion[i] == LegLeft || ModelRegion[i] == LegRight)
+                && Positions[i].Y < FloorY + (HipY - FloorY) * 0.25f && MathF.Abs(Positions[i].X - MiddleX) > HalfWidth * 0.25f;
+
             // 1c. no real legs: the top of each leg, and the middle where the two meet, stay mostly with the
             // hips, so a kick bends the bottom of the body instead of pulling it out into a sheet
             if (!float.IsNaN(HipY))
@@ -763,7 +841,7 @@ namespace SkinTool
                         if (ModelRegion[i] != LegLeft && ModelRegion[i] != LegRight)
                             continue;
                         float k = 1 - (opt.LegCut > 0 ? 0.7f : 1f) * SmoothStep(HipY - span, HipY, Positions[i].Y);
-                        if (opt.LegCut <= 0)
+                        if (opt.LegCut <= 0 && !Foot(i))
                         {
                             k *= SmoothStep(0, HalfWidth * 0.3f, MathF.Abs(Positions[i].X - MiddleX));
                             // the back of a round body is far behind the hips, so a leg swinging back
@@ -779,7 +857,7 @@ namespace SkinTool
             // 2. smooth the body across its surface so joints bend instead of tearing, then smooth the
             // body region on its own some more: a different shape bending at the fighter's exact joints
             // (waist, neck) folds like paper, a gradual blend bends like a body
-            Smooth(w, adj, boneCount, opt.SmoothPasses, i => true);
+            Smooth(w, adj, boneCount, opt.SmoothPasses, i => !Foot(i));
             Smooth(w, adj, boneCount, opt.BodySmoothPasses, i => ModelRegion[i] == Body);
 
             // 2b. above the neck everything follows the head alone, blending in over a short band
@@ -797,6 +875,11 @@ namespace SkinTool
                 }
             }
 
+            // 2c. the model's tail follows the fighter's tail bones, root to tip
+            Tail = new bool[n];
+            if (opt.TailBones != null && opt.TailBones.Length > 0)
+                TailWeights(w, boneCount, opt.TailBones);
+
             // 3. small separate parts (claws, teeth, whiskers, eyes) move as one piece with the
             // body around them, so they stay attached to it
             var body = Enumerable.Range(0, n).Where(i => !RigidPart[i]).ToList();
@@ -805,6 +888,29 @@ namespace SkinTool
                 var members = Enumerable.Range(0, n).Where(i => Part[i] == part).ToList();
                 if (members.Count == 0 || !RigidPart[members[0]])
                     continue;
+
+                // a separate tail keeps its weights along the tail bones, so it bends as it swings
+                if (members.Count(i => Tail[i]) * 2 > members.Count)
+                {
+                    Report += $"part {part}: {members.Count} vertices are the tail\n";
+                    continue;
+                }
+
+                // a foot on its own (a model whose feet are separate pieces under the body) is a leg, not a
+                // detail on the body: it moves as one piece with its own leg bones, so kicks reach out
+                if (members.Count(i => ModelRegion[i] == LegLeft || ModelRegion[i] == LegRight) * 2 > members.Count)
+                {
+                    var own = new float[boneCount];
+                    foreach (var i in members)
+                        for (int b = 0; b < boneCount; b++)
+                            own[b] += w[i][b];
+                    Normalize(own);
+                    var at = members.Aggregate(Vector3.Zero, (a, i) => a + Positions[i]) / members.Count;
+                    Report += $"part {part}: {members.Count} vertices around ({at.X:F1}, {at.Y:F1}, {at.Z:F1}) are a foot, follow bone {Array.IndexOf(own, own.Max())}\n";
+                    foreach (var i in members)
+                        w[i] = (float[])own.Clone();
+                    continue;
+                }
 
                 // the part follows the body where it's attached: weights come from around its base (the
                 // quarter of it nearest the body), not its tip, so it moves exactly as the spot it sits in
@@ -1018,7 +1124,7 @@ namespace SkinTool
             FighterRegion = fighter.Vertices.Select(v => BoneRegion[Remap[Dominant(v)]]).ToArray();
 
             Report += "fighter regions from the bone map: " + string.Join(", ", Enumerable.Range(0, RegionNames.Length)
-                .Select(r => (r, bones: roles.Values.Where(b => byBone[b] == r).OrderBy(b => b).ToList()))
+                .Select(r => (r, bones: roles.Values.Distinct().Where(b => byBone[b] == r).OrderBy(b => b).ToList()))
                 .Where(e => e.bones.Count > 0).Select(e => $"{RegionNames[e.r]} {string.Join(",", e.bones)}")) + "\n";
         }
 

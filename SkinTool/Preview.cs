@@ -36,6 +36,8 @@ namespace SkinTool
             public int Slot;
             // drawn from both sides in game (the mesh's cull flags are clear), as skin meshes are
             public bool TwoSided;
+            // culls its front instead of its back (an outline shell)
+            public bool CullFront;
         }
 
         // joint index -> extra rotation in degrees (x, y, z), per pose
@@ -75,7 +77,8 @@ namespace SkinTool
                     Bones = new[] { 0 },
                     Weights = new[] { 1f },
                 };
-                tris.Add(new Tri { A = V(t.A), B = V(t.B), C = V(t.C), Tex = LoadTexture(model.TextureOf(t.Material), textures) });
+                // an outline shell is drawn from one side only, as the game draws it (see SkinBuilder)
+                tris.Add(new Tri { A = V(t.A), B = V(t.B), C = V(t.C), Tex = LoadTexture(model.TextureOf(t.Material), textures), TwoSided = !t.Outline, CullFront = t.Outline });
             }
 
             var bind = new Pose { Name = "bind" };
@@ -87,7 +90,7 @@ namespace SkinTool
             for (int v = 0; v < 2; v++)
             {
                 var img = Render(sk, original, bind, v * 90f, cell);
-                var mine = Render(sk, tris, bind, v * 90f, cell, cull: false, clear: true);
+                var mine = Render(sk, tris, bind, v * 90f, cell, clear: true);
                 fighterSheet.Draw(img, v * cell, 0);
                 img.Blend(mine, 0.6f);
                 // where the head starts: a dashed line, placed the way Render places heights
@@ -162,13 +165,13 @@ namespace SkinTool
                     Bones = new[] { 0 },
                     Weights = new[] { 1f },
                 };
-                tris.Add(new Tri { A = V(t.A), B = V(t.B), C = V(t.C), Tex = tex });
+                tris.Add(new Tri { A = V(t.A), B = V(t.B), C = V(t.C), Tex = tex, TwoSided = !t.Outline, CullFront = t.Outline });
             }
 
             var sk = new Skeleton(new HSD_JOBJ { SX = 1, SY = 1, SZ = 1 });
             var sheet = new Bitmap(cell * 2, cell);
             for (int v = 0; v < 2; v++)
-                sheet.Draw(Render(sk, tris, new Pose { Name = "bind" }, v * 90f, cell, cull: false), v * cell, 0);
+                sheet.Draw(Render(sk, tris, new Pose { Name = "bind" }, v * 90f, cell), v * cell, 0);
             sheet.SavePng(output);
         }
 
@@ -178,12 +181,21 @@ namespace SkinTool
             var dats = args.Skip(2).ToList();
 
             // --anims Pl**.dat Pl**AJ.dat uses the fighter's real animations instead of made-up poses
+            // --poses AttackAirB@0.25,AttackAirF@0.3 picks the moves (and how far into each) to draw
+            var wanted = Animations.TestPoses;
+            int po = dats.IndexOf("--poses");
+            if (po >= 0)
+            {
+                wanted = dats[po + 1].Split(',').Select(e => e.Split('@'))
+                    .Select(e => (e[0], e.Length > 1 ? float.Parse(e[1], System.Globalization.CultureInfo.InvariantCulture) : 0.3f)).ToArray();
+                dats.RemoveRange(po, 2);
+            }
             var poses = DefaultPoses();
             int a = dats.IndexOf("--anims");
             if (a >= 0)
             {
                 poses = new List<Pose> { new Pose { Name = "bind" } };
-                poses.AddRange(Animations.Load(dats[a + 1], dats[a + 2], Animations.TestPoses));
+                poses.AddRange(Animations.Load(dats[a + 1], dats[a + 2], wanted));
                 dats.RemoveRange(a, 3);
             }
             // --bones colours each vertex by the bones it follows instead of its texture
@@ -294,14 +306,21 @@ namespace SkinTool
 
             // by area, so big pieces count and slivers at elbows and knees don't
             float total = tris.Sum(Area);
-            var bad = Enumerable.Range(0, tris.Count).Where(i => worst[i] > StretchLimit).ToList();
+            // feet that stretch far out by design (Jigglypuff's kicks) pull what's on them out with them
+            var code = BoneMaps.Code(dat) ?? "";
+            var stretchy = BoneMaps.StretchyFeet.Contains(code)
+                ? (BoneMaps.Get(code, (HSD_JOBJ)file.Roots[0].Data) ?? new Dictionary<string, int>())
+                    .Where(r => r.Key.EndsWith("fb") || r.Key.EndsWith("ff")).Select(r => r.Value).ToHashSet()
+                : new HashSet<int>();
+            bool OnFoot(Tri t) => new[] { t.A, t.B, t.C }.Any(v => v.Bones.Any(stretchy.Contains));
+            var bad = Enumerable.Range(0, tris.Count).Where(i => worst[i] > StretchLimit * (OnFoot(tris[i]) ? 3 : 1)).ToList();
             float share = total > 0 ? bad.Sum(i => Area(tris[i])) / total : 0;
             Console.WriteLine(FormattableString.Invariant($"stretch check: {share:P1} of the skin's area pulled to more than {StretchLimit}x in some pose"));
             if (share < StretchWarn)
                 return null;
 
             // where: the bone the most bad area follows, named from the fighter's bone map
-            var roles = BoneMaps.Get(BoneMaps.Code(dat)) ?? new Dictionary<string, int>();
+            var roles = BoneMaps.Get(BoneMaps.Code(dat), (HSD_JOBJ)file.Roots[0].Data) ?? new Dictionary<string, int>();
             int Main(Vert v) => v.Bones[Array.IndexOf(v.Weights, v.Weights.Max())];
             int bone = bad.GroupBy(i => Main(tris[i].A)).OrderByDescending(g => g.Sum(i => Area(tris[i]))).First().Key;
             string where = roles.FirstOrDefault(r => r.Value == bone).Key switch
@@ -319,6 +338,109 @@ namespace SkinTool
         // Past 4x by area: Fox's own skin 0.5 %, Monty on 7 fighters 0.1 to 1.5 %, Squidward with his face
         // read as arms 2.9 % and with his head as arms 7.2 %
         const float StretchLimit = 4f, StretchWarn = 0.025f;
+
+        /// <summary>
+        /// A character select portrait (136x188, see-through background) of a costume: the fighter in a
+        /// pose, turned towards the camera, cropped to the head and upper body, with the soft drop
+        /// shadow community portraits use.
+        /// </summary>
+        public static void Portrait(string costume, HSDRaw.Melee.Pl.SBM_FighterData fighter, Pose pose, string output, float yaw = -30)
+        {
+            const int W = 136, H = 188, Over = 4;
+            var sk = new Skeleton((HSD_JOBJ)new HSDRawFile(costume).Roots[0].Data);
+            var hidden = fighter != null ? Slots.HiddenByDefault(fighter) : new HashSet<int>();
+            // Peach's club, pan and racket and Ganondorf's sword only come out for some attacks
+            var code = BoneMaps.Code(costume);
+            if (fighter != null && (code == "Pe" || code == "Gn"))
+                hidden.UnionWith(Weapons.AllSlots(fighter, code));
+            var tris = Decode(sk).Where(t => !hidden.Contains(t.Slot)).ToList();
+
+            // some idle poses turn the whole body to the side (Jigglypuff, Kirby): turn the camera with the
+            // body, so the portrait shows the face
+            var skin = PosedSkinning(sk, pose);
+            var roles = BoneMaps.Get(code, (HSD_JOBJ)new HSDRawFile(costume).Roots[0].Data);
+            int body = roles != null && roles.TryGetValue("body", out var b) ? b : Math.Min(1, sk.Joints.Count - 1);
+            var facing = Vector3.TransformNormal(Vector3.UnitZ, skin[body]);
+            float turned = facing.X * facing.X + facing.Z * facing.Z > 1e-4f ? MathF.Atan2(facing.X, facing.Z) * 180 / MathF.PI : 0;
+
+            // where the posed fighter is, seen from the camera (turned, looking slightly down)
+            var view = Matrix4x4.CreateRotationY((yaw - turned) * MathF.PI / 180) * Matrix4x4.CreateRotationX(8 * MathF.PI / 180);
+            var pts = tris.SelectMany(t => new[] { t.A, t.B, t.C }).Distinct()
+                .Select(v =>
+                {
+                    var p = Vector3.Zero;
+                    for (int i = 0; i < v.Bones.Length; i++)
+                        p += Vector3.Transform(v.Pos, skin[v.Bones[i]]) * v.Weights[i];
+                    return Vector3.Transform(p, view);
+                }).ToList();
+            if (pts.Count == 0)
+                return;
+            float top = pts.Max(p => p.Y), bottom = pts.Min(p => p.Y), tall = MathF.Max(top - bottom, 1e-3f);
+
+            // the head and upper body fill the picture: the top 70% of the fighter, a little room above,
+            // centred on the upper half
+            float window = tall * 0.7f;
+            var upper = pts.Where(p => p.Y > top - tall * 0.45f).ToList();
+            float cx = (upper.Min(p => p.X) + upper.Max(p => p.X)) / 2;
+            // a short, wide fighter (Pikachu) would only show the middle of its head: widen to fit most of it
+            var shown = pts.Where(p => p.Y > top - window).Select(p => MathF.Abs(p.X - cx)).OrderBy(x => x).ToList();
+            window = MathF.Max(window, shown[shown.Count * 9 / 10] * 2 * 1.05f * H / W);
+            float scale = H * Over / window;
+            var framing = new Framing
+            {
+                View = view,
+                Scale = scale,
+                Center = new Vector2(W * Over / 2f - cx * scale, (top + window * 0.04f) * scale),
+                Width = W * Over,
+                Height = H * Over,
+                Flat = true,
+            };
+            var big = Render(sk, tris, pose, 0, 0, cull: true, clear: true, framing: framing);
+
+            // shrink, averaging colour by coverage so edges stay clean
+            var img = new Bitmap(W, H, clear: true);
+            var alpha = new float[W * H];
+            for (int y = 0; y < H; y++)
+                for (int x = 0; x < W; x++)
+                {
+                    var sum = Vector3.Zero;
+                    float a = 0;
+                    for (int dy = 0; dy < Over; dy++)
+                        for (int dx = 0; dx < Over; dx++)
+                        {
+                            int i = ((y * Over + dy) * big.Width + x * Over + dx) * 4;
+                            float pa = big.Rgba[i + 3] / 255f;
+                            sum += new Vector3(big.Rgba[i], big.Rgba[i + 1], big.Rgba[i + 2]) * pa;
+                            a += pa;
+                        }
+                    alpha[y * W + x] = a / (Over * Over);
+                    if (a > 0)
+                        img.Set(x, y, sum / a / 255f);
+                }
+
+            // the shadow: the same shape, up and to the left, in see-through black
+            const int sx = -6, sy = -4;
+            const float shadow = 109 / 255f;
+            for (int y = 0; y < H; y++)
+                for (int x = 0; x < W; x++)
+                {
+                    int i = (y * W + x) * 4;
+                    float a = alpha[y * W + x];
+                    int ox = x - sx, oy = y - sy;
+                    float s = ox >= 0 && ox < W && oy >= 0 && oy < H ? alpha[oy * W + ox] * shadow : 0;
+                    // the fighter over its shadow
+                    float outA = a + s * (1 - a);
+                    if (outA <= 0)
+                    {
+                        img.Rgba[i + 3] = 0;
+                        continue;
+                    }
+                    for (int c = 0; c < 3; c++)
+                        img.Rgba[i + c] = (byte)Math.Clamp(img.Rgba[i + c] * a / outA + 0.5f, 0, 255);
+                    img.Rgba[i + 3] = (byte)Math.Clamp(outA * 255 + 0.5f, 0, 255);
+                }
+            img.SavePng(output);
+        }
 
         public static List<Pose> DefaultPoses()
         {
@@ -404,6 +526,7 @@ namespace SkinTool
                     {
                         var dl = pobj.ToDisplayList();
                         bool twoSided = (pobj.Flags & (POBJ_FLAG.CULLBACK | POBJ_FLAG.CULLFRONT)) == 0;
+                        bool cullFront = (pobj.Flags & (POBJ_FLAG.CULLBACK | POBJ_FLAG.CULLFRONT)) == POBJ_FLAG.CULLFRONT;
                         var envs = pobj.EnvelopeWeights;
                         bool env = envs != null && pobj.HasAttribute(GXAttribName.GX_VA_PNMTXIDX);
                         int owner = pobj.SingleBoundJOBJ != null ? sk.IndexOf(pobj.SingleBoundJOBJ) : ji;
@@ -438,20 +561,20 @@ namespace SkinTool
                             {
                                 case GXPrimitiveType.Triangles:
                                     for (int i = 0; i + 2 < conv.Count; i += 3)
-                                        tris.Add(new Tri { A = conv[i], B = conv[i + 1], C = conv[i + 2], Tex = tex, Slot = slot, TwoSided = twoSided });
+                                        tris.Add(new Tri { A = conv[i], B = conv[i + 1], C = conv[i + 2], Tex = tex, Slot = slot, TwoSided = twoSided, CullFront = cullFront });
                                     break;
                                 case GXPrimitiveType.TriangleStrip:
                                     // every other strip triangle runs the other way round
                                     for (int i = 2; i < conv.Count; i++)
                                         tris.Add(i % 2 == 0
-                                            ? new Tri { A = conv[i - 2], B = conv[i - 1], C = conv[i], Tex = tex, Slot = slot, TwoSided = twoSided }
-                                            : new Tri { A = conv[i - 1], B = conv[i - 2], C = conv[i], Tex = tex, Slot = slot, TwoSided = twoSided });
+                                            ? new Tri { A = conv[i - 2], B = conv[i - 1], C = conv[i], Tex = tex, Slot = slot, TwoSided = twoSided, CullFront = cullFront }
+                                            : new Tri { A = conv[i - 1], B = conv[i - 2], C = conv[i], Tex = tex, Slot = slot, TwoSided = twoSided, CullFront = cullFront });
                                     break;
                                 case GXPrimitiveType.Quads:
                                     for (int i = 0; i + 3 < conv.Count; i += 4)
                                     {
-                                        tris.Add(new Tri { A = conv[i], B = conv[i + 1], C = conv[i + 2], Tex = tex, Slot = slot, TwoSided = twoSided });
-                                        tris.Add(new Tri { A = conv[i + 2], B = conv[i + 3], C = conv[i], Tex = tex, Slot = slot, TwoSided = twoSided });
+                                        tris.Add(new Tri { A = conv[i], B = conv[i + 1], C = conv[i + 2], Tex = tex, Slot = slot, TwoSided = twoSided, CullFront = cullFront });
+                                        tris.Add(new Tri { A = conv[i + 2], B = conv[i + 3], C = conv[i], Tex = tex, Slot = slot, TwoSided = twoSided, CullFront = cullFront });
                                     }
                                     break;
                             }
@@ -490,7 +613,18 @@ namespace SkinTool
             return skin;
         }
 
-        static Bitmap Render(Skeleton sk, List<Tri> tris, Pose pose, float yaw, int size, bool cull = true, bool clear = false)
+        /// <summary>A camera other than the preview's fixed one: where to look, how big, and the picture's size.</summary>
+        class Framing
+        {
+            public Matrix4x4 View;
+            public float Scale;
+            public Vector2 Center;
+            public int Width, Height;
+            // flat, cartoon-like light (as character select portraits are drawn)
+            public bool Flat;
+        }
+
+        static Bitmap Render(Skeleton sk, List<Tri> tris, Pose pose, float yaw, int size, bool cull = true, bool clear = false, Framing framing = null)
         {
             var skin = PosedSkinning(sk, pose);
             var posed = new Dictionary<Vert, Vector3>();
@@ -513,9 +647,17 @@ namespace SkinTool
             // frame: a fixed box around the fighter so every pose uses the same scale
             float scale = size / 26f;
             var center = new Vector2(size / 2f, size * 0.92f);
+            int width = size, height = size;
+            if (framing != null)
+            {
+                view = framing.View;
+                scale = framing.Scale;
+                center = framing.Center;
+                (width, height) = (framing.Width, framing.Height);
+            }
 
-            var img = new Bitmap(size, size, clear);
-            var depth = new float[size * size];
+            var img = new Bitmap(width, height, clear);
+            var depth = new float[width * height];
             Array.Fill(depth, float.MinValue);
             var light = Vector3.Normalize(new Vector3(0.4f, 0.6f, 1f));
 
@@ -527,20 +669,22 @@ namespace SkinTool
                 var nrm = Vector3.Cross(b - a, c - a);
                 if (nrm.LengthSquared() < 1e-12f) continue;
                 nrm = Vector3.Normalize(nrm);
-                float shade = 0.35f + 0.65f * Math.Abs(Vector3.Dot(nrm, light));
+                float shade = framing?.Flat == true
+                    ? 0.8f + 0.2f * MathF.Round(Math.Abs(Vector3.Dot(nrm, light)) * 2) / 2
+                    : 0.35f + 0.65f * Math.Abs(Vector3.Dot(nrm, light));
 
                 Vector2 S(Vector3 p) => new(center.X + p.X * scale, center.Y - p.Y * scale);
                 var sa = S(a); var sb = S(b); var sc = S(c);
 
                 int minX = Math.Max(0, (int)MathF.Floor(MathF.Min(sa.X, MathF.Min(sb.X, sc.X))));
-                int maxX = Math.Min(size - 1, (int)MathF.Ceiling(MathF.Max(sa.X, MathF.Max(sb.X, sc.X))));
+                int maxX = Math.Min(width - 1, (int)MathF.Ceiling(MathF.Max(sa.X, MathF.Max(sb.X, sc.X))));
                 int minY = Math.Max(0, (int)MathF.Floor(MathF.Min(sa.Y, MathF.Min(sb.Y, sc.Y))));
-                int maxY = Math.Min(size - 1, (int)MathF.Ceiling(MathF.Max(sa.Y, MathF.Max(sb.Y, sc.Y))));
+                int maxY = Math.Min(height - 1, (int)MathF.Ceiling(MathF.Max(sa.Y, MathF.Max(sb.Y, sc.Y))));
                 float area = Edge(sa, sb, sc);
                 if (MathF.Abs(area) < 1e-6f) continue;
                 // the game doesn't draw back faces of meshes that cull them, so neither does the preview
                 // (an inside-out mesh shows); skin meshes are drawn from both sides
-                if (cull && !t.TwoSided && area * CullSign > 0) continue;
+                if (cull && !t.TwoSided && area * CullSign * (t.CullFront ? -1 : 1) > 0) continue;
 
                 for (int y = minY; y <= maxY; y++)
                     for (int x = minX; x <= maxX; x++)
@@ -549,7 +693,7 @@ namespace SkinTool
                         float w0 = Edge(sb, sc, p) / area, w1 = Edge(sc, sa, p) / area, w2 = Edge(sa, sb, p) / area;
                         if (w0 < 0 || w1 < 0 || w2 < 0) continue;
                         float z = w0 * a.Z + w1 * b.Z + w2 * c.Z;
-                        int idx = y * size + x;
+                        int idx = y * width + x;
                         if (z <= depth[idx]) continue;
                         depth[idx] = z;
 

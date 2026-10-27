@@ -47,6 +47,23 @@ namespace SkinTool
             ["Zd"] = "face=89 body=67 lsh=72 lel=73 lha=76 rsh=100 rel=101 rha=104 lle=5 lkn=7 lfb=9 lff=10 rle=11 rkn=13 rfb=15 rff=16",
         };
 
+        /// <summary>The fighter's tail bones, root to tip, for a model that has a tail of its own.</summary>
+        public static readonly Dictionary<string, int[]> Tails = new()
+        {
+            ["Fx"] = new[] { 17, 18, 19, 20 },
+            ["Fc"] = new[] { 17 },
+            ["Pk"] = new[] { 47, 48, 49, 50 },
+            ["Pc"] = new[] { 43 },
+            ["Mt"] = new[] { 20, 21, 22, 23, 24, 25, 26 },
+            ["Ys"] = new[] { 19, 20, 21 },
+        };
+
+        /// <summary>
+        /// Fighters that kick by stretching their foot bones far out rather than swinging a leg: Jigglypuff's
+        /// feet scale to 3x in fair and bair (Kirby's only to 1.5x, which bending the body copes with).
+        /// </summary>
+        public static readonly HashSet<string> StretchyFeet = new() { "Pr" };
+
         /// <summary>The fighter's two-letter code from any of its file names (PlFx.dat, PlFxNr.dat).</summary>
         public static string Code(string file)
         {
@@ -64,6 +81,82 @@ namespace SkinTool
         }
 
         /// <summary>
+        /// The map for this costume, with each bone the costume's model isn't weighted to swapped for the stacked
+        /// joint in the same spot that it is (the maps were read off pictures, and a stacked pair looks like one
+        /// joint there, but only one of the two bends: weighting to the other leaves a stiff hip or foot).
+        /// </summary>
+        public static Dictionary<string, int> Get(string code, HSD_JOBJ costume)
+        {
+            var map = Get(code);
+            if (map == null)
+                return null;
+            var sk = new Skeleton(costume);
+            var used = Weighted(costume);
+            foreach (var role in map.Keys.ToList())
+                if (Limb(role) && map[role] < sk.Joints.Count && !used.Contains(map[role]))
+                {
+                    var twin = Twin(sk, used, map[role]);
+                    if (twin >= 0)
+                        map[role] = twin;
+                    else
+                    {
+                        // a limb bone the model never follows is a helper the game moves on its own (where
+                        // an item is held, Samus's cannon muzzle): the limb follows the joint above it instead
+                        int up = sk.Parent[map[role]];
+                        while (up >= 0 && !used.Contains(up))
+                            up = sk.Parent[up];
+                        if (up >= 0)
+                            map[role] = up;
+                    }
+                }
+            return map;
+        }
+
+        static bool Limb(string role) =>
+            role.Length == 3 && (role[0] == 'l' || role[0] == 'r') && role.Substring(1) is "sh" or "el" or "ha" or "le" or "kn" or "fb" or "ff";
+
+        /// <summary>The joints the costume's own model is weighted to.</summary>
+        public static HashSet<int> Weighted(HSD_JOBJ root)
+        {
+            var list = root.TreeList;
+            var used = new HashSet<int>();
+            foreach (var j in list)
+                foreach (var d in j.Dobj?.List ?? Enumerable.Empty<HSD_DOBJ>())
+                    foreach (var p in d.Pobj?.List ?? Enumerable.Empty<HSD_POBJ>())
+                        foreach (var e in p.EnvelopeWeights ?? Array.Empty<HSD_Envelope>())
+                            foreach (var b in e.JOBJs)
+                                used.Add(list.IndexOf(b));
+            return used;
+        }
+
+        /// <summary>
+        /// A joint the costume is weighted to that sits where <paramref name="bone"/> does, up or down its chain
+        /// (fighters often stack two joints in one spot, and only one of them carries the bend), or -1.
+        /// </summary>
+        public static int Twin(Skeleton sk, HashSet<int> used, int bone)
+        {
+            var at = sk.Position(bone);
+            for (int b = sk.Parent[bone]; b >= 0 && (sk.Position(b) - at).Length() < 0.01f; b = sk.Parent[b])
+                if (used.Contains(b))
+                    return b;
+            var next = new List<int> { bone };
+            while (next.Count > 0)
+            {
+                var kids = new List<int>();
+                foreach (var n in next)
+                    for (int c = 0; c < sk.Joints.Count; c++)
+                        if (sk.Parent[c] == n && (sk.Position(c) - at).Length() < 0.01f)
+                        {
+                            if (used.Contains(c))
+                                return c;
+                            kids.Add(c);
+                        }
+                next = kids;
+            }
+            return -1;
+        }
+
+        /// <summary>
         /// Prints where each mapped bone sits, so a wrong number stands out
         /// (left and right should mirror, the face should be on top and the feet at the bottom).
         /// </summary>
@@ -77,7 +170,9 @@ namespace SkinTool
                 return 1;
             }
 
-            var sk = new Skeleton((HSD_JOBJ)new HSDRawFile(costume).Roots[0].Data);
+            var root = (HSD_JOBJ)new HSDRawFile(costume).Roots[0].Data;
+            var sk = new Skeleton(root);
+            var used = Weighted(root);
             int problems = 0;
             foreach (var (role, bone) in map)
             {
@@ -97,6 +192,14 @@ namespace SkinTool
                         note = $"  doesn't mirror {other}";
                         problems++;
                     }
+                }
+                if (!used.Contains(bone))
+                {
+                    var twin = Twin(sk, used, bone);
+                    note += !Limb(role) ? "  not weighted in the costume"
+                        : twin >= 0 ? $"  not weighted in the costume; {twin} at the same spot is (used instead)"
+                        : $"  not weighted in the costume (follows {Get(code, root)[role]} instead)";
+                    problems++;
                 }
                 Console.WriteLine($"{role,-7} {bone,4}  ({p.X,6:F2}, {p.Y,6:F2}, {p.Z,6:F2}) parent {sk.Parent[bone]}{note}");
             }
