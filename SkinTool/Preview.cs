@@ -33,6 +33,7 @@ namespace SkinTool
         {
             public Vert A, B, C;
             public Tex Tex;
+            public int Slot;
         }
 
         // joint index -> extra rotation in degrees (x, y, z), per pose
@@ -45,6 +46,107 @@ namespace SkinTool
 
             // values taken from an animation: scale xyz, rotation xyz, translation xyz (null keeps the bind value)
             public Dictionary<int, float?[]> Values = new();
+        }
+
+        static HashSet<int> onlySlots;
+
+        /// <summary>
+        /// The fitted model laid over the original costume, front and side, in the bind pose, to see how its
+        /// size and turn compare before building.
+        /// </summary>
+        public static void Overlay(string costume, HSDRaw.Melee.Pl.SBM_FighterData fighter, ObjModel model, Vector3[] positions, string output)
+        {
+            const int cell = 320;
+            var root = (HSD_JOBJ)new HSDRawFile(costume).Roots[0].Data;
+            var sk = new Skeleton(root);
+            var hidden = fighter != null ? Slots.HiddenByDefault(fighter) : new HashSet<int>();
+            var original = Decode(sk).Where(t => !hidden.Contains(t.Slot)).ToList();
+
+            var textures = new Dictionary<string, Tex>();
+            var tris = new List<Tri>();
+            foreach (var t in model.Triangles)
+            {
+                Vert V(ObjModel.Corner c) => new Vert
+                {
+                    Pos = positions[c.Position],
+                    UV = c.UV >= 0 ? new Vector2(model.UVs[c.UV].X, 1 - model.UVs[c.UV].Y) : Vector2.Zero,
+                    Bones = new[] { 0 },
+                    Weights = new[] { 1f },
+                };
+                tris.Add(new Tri { A = V(t.A), B = V(t.B), C = V(t.C), Tex = LoadTexture(model.TextureOf(t.Material), textures) });
+            }
+
+            var bind = new Pose { Name = "bind" };
+            var sheet = new Bitmap(cell * 2, cell);
+            for (int v = 0; v < 2; v++)
+            {
+                var img = Render(sk, original, bind, v * 90f, cell);
+                img.Blend(Render(sk, tris, bind, v * 90f, cell, cull: false, clear: true), 0.6f);
+                sheet.Draw(img, v * cell, 0);
+            }
+            sheet.SavePng(output);
+            Console.WriteLine($"wrote {output}");
+        }
+
+        static Tex LoadTexture(string path, Dictionary<string, Tex> cache)
+        {
+            if (string.IsNullOrEmpty(path) || !System.IO.File.Exists(path)) return null;
+            if (cache.TryGetValue(path, out var t)) return t;
+            try
+            {
+                using var stream = System.IO.File.OpenRead(path);
+                var img = StbImageSharp.ImageResult.FromStream(stream, StbImageSharp.ColorComponents.RedGreenBlueAlpha);
+                var bgra = new byte[img.Data.Length];
+                for (int i = 0; i < bgra.Length; i += 4)
+                {
+                    bgra[i] = img.Data[i + 2]; bgra[i + 1] = img.Data[i + 1]; bgra[i + 2] = img.Data[i]; bgra[i + 3] = img.Data[i + 3];
+                }
+                t = new Tex { W = img.Width, H = img.Height, Bgra = bgra };
+            }
+            catch
+            {
+                t = null;
+            }
+            return cache[path] = t;
+        }
+
+        /// <summary>Draws an uploaded model from the front and the side, filling the picture, to pick it from others.</summary>
+        public static void Thumbnail(ObjModel model, string output)
+        {
+            const int cell = 320;
+            var min = new Vector3(float.MaxValue);
+            var max = new Vector3(float.MinValue);
+            foreach (var p in model.Positions)
+            {
+                min = Vector3.Min(min, p);
+                max = Vector3.Max(max, p);
+            }
+            var size = Vector3.Max(max - min, new Vector3(1e-6f));
+            // the renderer frames about 26 units, with the floor near the bottom
+            float scale = Math.Min(20 / size.Y, 22 / Math.Max(size.X, size.Z));
+            var centre = (min + max) / 2;
+            Vector3 Fit(Vector3 p) => new Vector3((p.X - centre.X) * scale, (p.Y - min.Y) * scale - 7.3f, (p.Z - centre.Z) * scale);
+
+            var textures = new Dictionary<string, Tex>();
+            var tris = new List<Tri>();
+            foreach (var t in model.Triangles)
+            {
+                var tex = LoadTexture(model.TextureOf(t.Material), textures);
+                Vert V(ObjModel.Corner c) => new Vert
+                {
+                    Pos = Fit(model.Positions[c.Position]),
+                    UV = c.UV >= 0 ? new Vector2(model.UVs[c.UV].X, 1 - model.UVs[c.UV].Y) : Vector2.Zero,
+                    Bones = new[] { 0 },
+                    Weights = new[] { 1f },
+                };
+                tris.Add(new Tri { A = V(t.A), B = V(t.B), C = V(t.C), Tex = tex });
+            }
+
+            var sk = new Skeleton(new HSD_JOBJ { SX = 1, SY = 1, SZ = 1 });
+            var sheet = new Bitmap(cell * 2, cell);
+            for (int v = 0; v < 2; v++)
+                sheet.Draw(Render(sk, tris, new Pose { Name = "bind" }, v * 90f, cell, cull: false), v * cell, 0);
+            sheet.SavePng(output);
         }
 
         public static int Run(string[] args)
@@ -63,17 +165,38 @@ namespace SkinTool
             }
             // --bones colours each vertex by the bones it follows instead of its texture
             showBones = dats.Remove("--bones");
+            // --fighter Pl**.dat draws only what the game shows by default (no far-away model, one choice
+            // per switchable group) and adds a row with each weapon in the hand
+            HSDRaw.Melee.Pl.SBM_FighterData fighter = null;
+            int fo = dats.IndexOf("--fighter");
+            if (fo >= 0)
+            {
+                fighter = Slots.Load(dats[fo + 1]);
+                dats.RemoveRange(fo, 2);
+            }
+            // --slots 55,56 draws only those mesh slots, to see what a slot is
+            int so = dats.IndexOf("--slots");
+            if (so >= 0)
+            {
+                onlySlots = dats[so + 1].Split(',').Select(int.Parse).ToHashSet();
+                dats.RemoveRange(so, 2);
+            }
 
             const int cell = 320;
             int views = 2;
-            var sheet = new Bitmap(cell * poses.Count * views, cell * dats.Count);
+            var code = BoneMaps.Code(dats[0]);
+            var weapons = fighter != null ? Weapons.For(code) : Array.Empty<Weapons.Weapon>();
+            int columns = Math.Max(poses.Count, weapons.Length);
+            var sheet = new Bitmap(cell * columns * views, cell * (dats.Count + (weapons.Length > 0 ? 1 : 0)));
 
+            var hidden = fighter != null ? Slots.HiddenByDefault(fighter) : new HashSet<int>();
             for (int row = 0; row < dats.Count; row++)
             {
                 var file = new HSDRawFile(dats[row]);
                 var root = (HSD_JOBJ)file.Roots[0].Data;
                 var sk = new Skeleton(root);
-                var tris = Decode(sk);
+                var all = Decode(sk);
+                var tris = all.Where(t => !hidden.Contains(t.Slot)).ToList();
 
                 for (int p = 0; p < poses.Count; p++)
                     for (int v = 0; v < views; v++)
@@ -81,10 +204,26 @@ namespace SkinTool
                         var img = Render(sk, tris, poses[p], v * 90f, cell);
                         sheet.Draw(img, (p * views + v) * cell, row * cell);
                     }
+
+                // the first costume holding each weapon, front and side
+                if (row == 0 && weapons.Length > 0)
+                {
+                    var weaponSlots = Weapons.AllSlots(fighter, code);
+                    var body = all.Where(t => !hidden.Contains(t.Slot) && !weaponSlots.Contains(t.Slot)).ToList();
+                    for (int w = 0; w < weapons.Length; w++)
+                    {
+                        var held = Weapons.HeldSlots(fighter, weapons[w]);
+                        var withWeapon = body.Concat(all.Where(t => held.Contains(t.Slot))).ToList();
+                        for (int v = 0; v < views; v++)
+                            sheet.Draw(Render(sk, withWeapon, poses[0], v * 90f, cell), (w * views + v) * cell, dats.Count * cell);
+                    }
+                }
             }
 
             sheet.SavePng(output);
             Console.WriteLine($"poses: {string.Join(", ", poses.Select(p => p.Name))} (front and side each)");
+            if (weapons.Length > 0)
+                Console.WriteLine($"weapons row: {string.Join(", ", weapons.Select(w => w.Key))}");
             Console.WriteLine($"wrote {output}");
             return 0;
         }
@@ -146,6 +285,7 @@ namespace SkinTool
         {
             var tris = new List<Tri>();
             var texCache = new Dictionary<HSD_TOBJ, Tex>();
+            int slot = -1;
 
             for (int ji = 0; ji < sk.Joints.Count; ji++)
             {
@@ -154,7 +294,8 @@ namespace SkinTool
 
                 foreach (var dobj in joint.Dobj.List)
                 {
-                    if (dobj.Pobj == null) continue;
+                    slot++;
+                    if (dobj.Pobj == null || (onlySlots != null && !onlySlots.Contains(slot))) continue;
 
                     Tex tex = null;
                     var tobj = dobj.Mobj?.Textures;
@@ -204,20 +345,20 @@ namespace SkinTool
                             {
                                 case GXPrimitiveType.Triangles:
                                     for (int i = 0; i + 2 < conv.Count; i += 3)
-                                        tris.Add(new Tri { A = conv[i], B = conv[i + 1], C = conv[i + 2], Tex = tex });
+                                        tris.Add(new Tri { A = conv[i], B = conv[i + 1], C = conv[i + 2], Tex = tex, Slot = slot });
                                     break;
                                 case GXPrimitiveType.TriangleStrip:
                                     // every other strip triangle runs the other way round
                                     for (int i = 2; i < conv.Count; i++)
                                         tris.Add(i % 2 == 0
-                                            ? new Tri { A = conv[i - 2], B = conv[i - 1], C = conv[i], Tex = tex }
-                                            : new Tri { A = conv[i - 1], B = conv[i - 2], C = conv[i], Tex = tex });
+                                            ? new Tri { A = conv[i - 2], B = conv[i - 1], C = conv[i], Tex = tex, Slot = slot }
+                                            : new Tri { A = conv[i - 1], B = conv[i - 2], C = conv[i], Tex = tex, Slot = slot });
                                     break;
                                 case GXPrimitiveType.Quads:
                                     for (int i = 0; i + 3 < conv.Count; i += 4)
                                     {
-                                        tris.Add(new Tri { A = conv[i], B = conv[i + 1], C = conv[i + 2], Tex = tex });
-                                        tris.Add(new Tri { A = conv[i + 2], B = conv[i + 3], C = conv[i], Tex = tex });
+                                        tris.Add(new Tri { A = conv[i], B = conv[i + 1], C = conv[i + 2], Tex = tex, Slot = slot });
+                                        tris.Add(new Tri { A = conv[i + 2], B = conv[i + 3], C = conv[i], Tex = tex, Slot = slot });
                                     }
                                     break;
                             }
@@ -256,7 +397,7 @@ namespace SkinTool
             return skin;
         }
 
-        static Bitmap Render(Skeleton sk, List<Tri> tris, Pose pose, float yaw, int size)
+        static Bitmap Render(Skeleton sk, List<Tri> tris, Pose pose, float yaw, int size, bool cull = true, bool clear = false)
         {
             var skin = PosedSkinning(sk, pose);
             var posed = new Dictionary<Vert, Vector3>();
@@ -280,7 +421,7 @@ namespace SkinTool
             float scale = size / 26f;
             var center = new Vector2(size / 2f, size * 0.92f);
 
-            var img = new Bitmap(size, size);
+            var img = new Bitmap(size, size, clear);
             var depth = new float[size * size];
             Array.Fill(depth, float.MinValue);
             var light = Vector3.Normalize(new Vector3(0.4f, 0.6f, 1f));
@@ -305,7 +446,7 @@ namespace SkinTool
                 float area = Edge(sa, sb, sc);
                 if (MathF.Abs(area) < 1e-6f) continue;
                 // the game doesn't draw back faces, so neither does the preview (an inside-out mesh shows)
-                if (area * CullSign > 0) continue;
+                if (cull && area * CullSign > 0) continue;
 
                 for (int y = minY; y <= maxY; y++)
                     for (int x = minX; x <= maxX; x++)

@@ -60,6 +60,20 @@ rotate = 180
 leg-band = 0.3
 ```
 
+**Weapons.** Peach's golf club, frying pan and tennis racket, the swords of Marth, Roy, Link, Young
+Link and Ganondorf, the Links' shields and the Ice Climbers' hammers are rigid meshes on a weapon
+bone that the fighter's data file switches on and off (`weapons <costume.dat>` lists them). The
+body never goes in those slots, and each costume keeps its own weapon unless one is given:
+`--weapon pan=pan.obj` (or a zip) fits the model over the original, its longest side along the
+original's, scaled to the same length, its wide end (a pan's head, a sword's guard) at the original's
+wide end. `--weapon-flip pan` turns it end for end if it comes out backwards. The preview, given
+`--fighter`, adds a row with each weapon in the hand.
+
+**Picking and sizing.** A zip or folder may hold several models: `models <zip> --out <folder>`
+lists them with a picture of each (`<n>.png`), and `--pick <path inside>` (`--weapon-pick
+pan=<path>`) chooses one. `--overlay size.png --fit-only` draws the fitted model over the first
+costume without building, to check its size and turn.
+
 Other commands:
 
 - `check <original.dat> <skin.dat>`: same skeleton, flags and mesh count; weights valid.
@@ -68,3 +82,4 @@ Other commands:
 - `preview ... --bones` colours the model by the bones it follows.
 - `bonemap <costume.dat>`: where the fighter's bone map bones sit (left and right should mirror).
 - `inspect <costume.dat>`, `slots <Pl**.dat>`: list joints, meshes and visibility tables.
+- `preview ... --slots 55,56` draws only those mesh slots, to see what a slot holds.

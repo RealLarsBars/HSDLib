@@ -13,7 +13,8 @@ namespace SkinTool
         public readonly int Width, Height;
         public readonly byte[] Rgba;
 
-        public Bitmap(int width, int height)
+        /// <param name="clear">leave the background see-through, to lay the picture over another</param>
+        public Bitmap(int width, int height, bool clear = false)
         {
             Width = width;
             Height = height;
@@ -25,7 +26,18 @@ namespace SkinTool
                 Rgba[i] = 40;
                 Rgba[i + 1] = 44;
                 Rgba[i + 2] = 52;
-                Rgba[i + 3] = 255;
+                Rgba[i + 3] = (byte)(clear ? 0 : 255);
+            }
+        }
+
+        /// <summary>Lays the drawn (opaque) pixels of <paramref name="img"/> over this one, partly see-through.</summary>
+        public void Blend(Bitmap img, float amount)
+        {
+            for (int i = 0; i < Rgba.Length; i += 4)
+            {
+                if (img.Rgba[i + 3] == 0) continue;
+                for (int c = 0; c < 3; c++)
+                    Rgba[i + c] = (byte)(Rgba[i + c] * (1 - amount) + img.Rgba[i + c] * amount + 0.5f);
             }
         }
 
