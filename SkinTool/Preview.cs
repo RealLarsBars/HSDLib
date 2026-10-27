@@ -78,7 +78,7 @@ namespace SkinTool
                     Weights = new[] { 1f },
                 };
                 // an outline shell is drawn from one side only, as the game draws it (see SkinBuilder)
-                tris.Add(new Tri { A = V(t.A), B = V(t.B), C = V(t.C), Tex = LoadTexture(model.TextureOf(t.Material), textures), TwoSided = !t.Outline, CullFront = t.Outline });
+                tris.Add(new Tri { A = V(t.A), B = V(t.B), C = V(t.C), Tex = LoadTexture(model.TextureOf(t.Material), textures), TwoSided = !t.Outline });
             }
 
             var bind = new Pose { Name = "bind" };
@@ -165,7 +165,7 @@ namespace SkinTool
                     Bones = new[] { 0 },
                     Weights = new[] { 1f },
                 };
-                tris.Add(new Tri { A = V(t.A), B = V(t.B), C = V(t.C), Tex = tex, TwoSided = !t.Outline, CullFront = t.Outline });
+                tris.Add(new Tri { A = V(t.A), B = V(t.B), C = V(t.C), Tex = tex, TwoSided = !t.Outline });
             }
 
             var sk = new Skeleton(new HSD_JOBJ { SX = 1, SY = 1, SZ = 1 });
@@ -467,7 +467,8 @@ namespace SkinTool
 
         static bool showBones;
 
-        // the screen winding of a back face, checked against Fox's own meshes
+        // the screen winding of a face that CULLFRONT hides, checked against Fox's own meshes (which are
+        // all CULLFRONT, their winding running against their normals) and against BMO's outline in game
         const float CullSign = -1;
 
         static Vector3 BoneColour(int bone)
@@ -684,7 +685,7 @@ namespace SkinTool
                 if (MathF.Abs(area) < 1e-6f) continue;
                 // the game doesn't draw back faces of meshes that cull them, so neither does the preview
                 // (an inside-out mesh shows); skin meshes are drawn from both sides
-                if (cull && !t.TwoSided && area * CullSign * (t.CullFront ? -1 : 1) > 0) continue;
+                if (cull && !t.TwoSided && area * CullSign * (t.CullFront ? 1 : -1) > 0) continue;
 
                 for (int y = minY; y <= maxY; y++)
                     for (int x = minX; x <= maxX; x++)
