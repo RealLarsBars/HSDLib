@@ -58,7 +58,6 @@ arms = auto       # auto | fighter (always onto the fighter's arms) | body
 scale = 1.1
 width = 1.0       # stretch sideways only
 height = 1.2      # stretch upwards only (from the floor)
-lift = 0.1        # move up by a tenth of the fighter's height (negative: down)
 rotate = 180
 leg-band = 0.3
 ```
