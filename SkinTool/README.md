@@ -15,7 +15,8 @@ What `build` does, in the order the usual Blender + HSDRaw tutorial does it by h
 
 1. **Fit**: scales the model to sit on the fighter's skeleton (between "as tall as the fighter" and
    "as wide as its arm span", but never wider than the arm span; `--scale` adjusts it, `--rotate`
-   turns a model that faces the wrong way).
+   turns a model that faces the wrong way; `--rotate x,y,z` also stands up one that lies down or is
+   upside down, in degrees about each axis).
 2. **Weights** (the Data Transfer step): copies weights from the fighter's own mesh, onto the bones
    modders weight custom skins to (the fighter's bone map in `BoneMaps.cs`: face, body, shoulders,
    elbows, hands, legs, knees and feet). Where a mapped limb bone isn't one the costume's own model

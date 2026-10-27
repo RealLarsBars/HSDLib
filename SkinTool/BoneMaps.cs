@@ -47,6 +47,12 @@ namespace SkinTool
             ["Zd"] = "face=89 body=67 lsh=72 lel=73 lha=76 rsh=100 rel=101 rha=104 lle=5 lkn=7 lfb=9 lff=10 rle=11 rkn=13 rfb=15 rff=16",
         };
 
+        /// <summary>
+        /// Fighters that kick by stretching their foot bones far out rather than swinging a leg: Jigglypuff's
+        /// feet scale to 3x in fair and bair (Kirby's only to 1.5x, which bending the body copes with).
+        /// </summary>
+        public static readonly HashSet<string> StretchyFeet = new() { "Pr" };
+
         /// <summary>The fighter's two-letter code from any of its file names (PlFx.dat, PlFxNr.dat).</summary>
         public static string Code(string file)
         {

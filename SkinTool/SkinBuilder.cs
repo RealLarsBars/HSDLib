@@ -62,7 +62,7 @@ namespace SkinTool
 
             // one mesh per texture keeps the slot count low
             var groups = model.Triangles
-                .GroupBy(t => model.TextureOf(t.Material) ?? "")
+                .GroupBy(t => (Texture: model.TextureOf(t.Material) ?? "", t.Outline))
                 .OrderByDescending(g => g.Count())
                 .ToList();
 
@@ -130,13 +130,15 @@ namespace SkinTool
                 var attrs = new[] { GXAttribName.GX_VA_PNMTXIDX, GXAttribName.GX_VA_POS, GXAttribName.GX_VA_NRM, GXAttribName.GX_VA_TEX0 };
                 var dobj = new HSD_DOBJ()
                 {
-                    Mobj = CreateMaterial(group.Key, textures),
+                    Mobj = CreateMaterial(group.Key.Texture, textures),
                     Pobj = generator.CreatePOBJsFromTriangleList(vertices, attrs, bones, boneWeights),
                 };
                 // drawn from both sides, like Fox's scarf: where the body bends hard (a round body
-                // working as legs) faces fold over, and one-sided faces would leave see-through holes
+                // working as legs) faces fold over, and one-sided faces would leave see-through holes.
+                // An outline shell faces inwards and is drawn from its back only, so it shows as an edge
+                // (the game's front is the other way round from an OBJ's, so that's CULLFRONT here).
                 for (var pobj = dobj.Pobj; pobj != null; pobj = pobj.Next)
-                    pobj.Flags &= ~(POBJ_FLAG.CULLFRONT | POBJ_FLAG.CULLBACK);
+                    pobj.Flags = (pobj.Flags & ~(POBJ_FLAG.CULLFRONT | POBJ_FLAG.CULLBACK)) | (group.Key.Outline ? POBJ_FLAG.CULLFRONT : 0);
                 real.Add(dobj);
             }
 

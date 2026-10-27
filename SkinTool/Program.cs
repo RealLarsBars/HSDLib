@@ -12,7 +12,7 @@ namespace SkinTool
     {
         const string Usage =
 @"skintool build --model <model.obj/.fbx/.dae|model.zip> --dat <costume.dat> [--dat <costume.dat> ...] --out <folder|out.zip>
-               [--fighter <Pl**.dat>] [--bones 41,22,...] [--scale 1.0] [--width 1.0] [--height 1.0] [--rotate 0] [--textures <costume.dat>=<folder> ...]
+               [--fighter <Pl**.dat>] [--bones 41,22,...] [--scale 1.0] [--width 1.0] [--height 1.0] [--rotate 0 | x,y,z] [--textures <costume.dat>=<folder> ...]
                [--legs auto|separate|body|cut] [--arms auto|fighter|body] [--neck auto|none|0.6] [--leg-band 0.3] [--keep-shape]
                [--pick <model in the zip or folder>] [--weapon <name>=<model|zip> [--weapon-pick <name>=<model>] [--weapon-flip <name>] ...]
                [--preview <out.png> [--anims <Pl**AJ.dat>]] [--overlay <out.png> [--fit-only]] [--portraits <folder>]
@@ -123,6 +123,18 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
             return v >= 0.5f && v <= 2f ? v : throw new Exception($"{name} must be between 0.5 and 2, not {value}");
         }
 
+        // degrees to turn the model: one number turns it round (facing), x,y,z also tips it over
+        static void Rotate(AutoRig.Options opt, string value)
+        {
+            var parts = value.Split(',').Select(v => float.Parse(v.Trim(), CultureInfo.InvariantCulture)).ToArray();
+            if (parts.Length == 1)
+                opt.RotateY = parts[0];
+            else if (parts.Length == 3)
+                (opt.RotateX, opt.RotateY, opt.RotateZ) = (parts[0], parts[1], parts[2]);
+            else
+                throw new Exception($"rotate takes one angle or x,y,z, not {value}");
+        }
+
         // where the head starts: auto (find the neck), none, or a share of the model's height (0.2 to 0.95)
         static float Neck(string value)
         {
@@ -166,7 +178,7 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                     case "scale": opt.Scale = float.Parse(value, CultureInfo.InvariantCulture); break;
                     case "width": opt.Width = Stretch(name, value); break;
                     case "height": opt.Height = Stretch(name, value); break;
-                    case "rotate": opt.RotateY = float.Parse(value, CultureInfo.InvariantCulture); break;
+                    case "rotate": Rotate(opt, value); break;
                     case "leg-band": opt.LegBand = float.Parse(value, CultureInfo.InvariantCulture); break;
                     case "neck": opt.Neck = Neck(value); break;
                     default: throw new Exception($"skin.txt: unknown rule {name} (legs, arms, neck, scale, width, height, rotate, leg-band)");
@@ -277,7 +289,7 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                     case "--cut-legs": opt.LegCut = float.Parse(Next(), CultureInfo.InvariantCulture); break;
                     case "--width": opt.Width = Stretch("width", Next()); break;
                     case "--height": opt.Height = Stretch("height", Next()); break;
-                    case "--rotate": opt.RotateY = float.Parse(Next(), CultureInfo.InvariantCulture); break;
+                    case "--rotate": Rotate(opt, Next()); break;
                     case "--pick": pick = Next(); break;
                     case "--overlay": overlayPng = Next(); break;
                     case "--fit-only": fitOnly = true; break;
@@ -452,6 +464,7 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                 opt.Head = map.GetValueOrDefault("face", map.GetValueOrDefault("body", -1));
                 opt.Roles = map;
             }
+            opt.StretchyFeet = BoneMaps.StretchyFeet.Contains(BoneMaps.Code(dats[0]) ?? "");
             var rig = AutoRig.Run(obj, fighter, skeleton, opt);
             Console.Write(rig.Report);
             if (overlayPng != null)
