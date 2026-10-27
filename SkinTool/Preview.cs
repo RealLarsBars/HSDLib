@@ -355,9 +355,16 @@ namespace SkinTool
                 hidden.UnionWith(Weapons.AllSlots(fighter, code));
             var tris = Decode(sk).Where(t => !hidden.Contains(t.Slot)).ToList();
 
-            // where the posed fighter is, seen from the camera (turned, looking slightly down)
-            var view = Matrix4x4.CreateRotationY(yaw * MathF.PI / 180) * Matrix4x4.CreateRotationX(8 * MathF.PI / 180);
+            // some idle poses turn the whole body to the side (Jigglypuff, Kirby): turn the camera with the
+            // body, so the portrait shows the face
             var skin = PosedSkinning(sk, pose);
+            var roles = BoneMaps.Get(code, (HSD_JOBJ)new HSDRawFile(costume).Roots[0].Data);
+            int body = roles != null && roles.TryGetValue("body", out var b) ? b : Math.Min(1, sk.Joints.Count - 1);
+            var facing = Vector3.TransformNormal(Vector3.UnitZ, skin[body]);
+            float turned = facing.X * facing.X + facing.Z * facing.Z > 1e-4f ? MathF.Atan2(facing.X, facing.Z) * 180 / MathF.PI : 0;
+
+            // where the posed fighter is, seen from the camera (turned, looking slightly down)
+            var view = Matrix4x4.CreateRotationY((yaw - turned) * MathF.PI / 180) * Matrix4x4.CreateRotationX(8 * MathF.PI / 180);
             var pts = tris.SelectMany(t => new[] { t.A, t.B, t.C }).Distinct()
                 .Select(v =>
                 {
