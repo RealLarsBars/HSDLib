@@ -39,6 +39,9 @@ namespace SkinTool
 
         public static ObjModel Load(string path)
         {
+            if (!path.EndsWith(".obj", StringComparison.OrdinalIgnoreCase))
+                return ModelImport.Load(path);
+
             var model = new ObjModel { Directory = Path.GetDirectoryName(Path.GetFullPath(path)) };
             string material = null;
             string obj = null;
@@ -127,7 +130,7 @@ namespace SkinTool
         /// Finds a file the OBJ or MTL names. Models exported on Windows often name absolute paths
         /// or use different letter case, so this falls back to the file name anywhere in the model's folder.
         /// </summary>
-        private string Find(string name)
+        internal string Find(string name)
         {
             name = name.Replace('\\', '/');
             var full = Path.Combine(Directory, name);
@@ -174,7 +177,10 @@ namespace SkinTool
             }
             float limit = (max - min).Length() * maxShare;
 
-            static (int, int) Key(int a, int b) => a < b ? (a, b) : (b, a);
+            // positions at the same place count as one, so a texture seam that splits them isn't an opening
+            var first = new Dictionary<Vector3, int>();
+            var same = Positions.Select((p, i) => first.TryGetValue(p, out int f) ? f : first[p] = i).ToArray();
+            (int, int) Key(int a, int b) => same[a] < same[b] ? (same[a], same[b]) : (same[b], same[a]);
             var count = new Dictionary<(int, int), int>();
             foreach (var t in Triangles)
                 foreach (var (a, b) in new[] { (t.A, t.B), (t.B, t.C), (t.C, t.A) })
@@ -185,7 +191,7 @@ namespace SkinTool
             foreach (var t in Triangles)
                 foreach (var (a, b) in new[] { (t.A, t.B), (t.B, t.C), (t.C, t.A) })
                     if (count[Key(a.Position, b.Position)] == 1)
-                        next[b.Position] = (b, a, t);
+                        next[same[b.Position]] = (b, a, t);
 
             int closed = 0;
             var done = new HashSet<int>();
@@ -199,7 +205,7 @@ namespace SkinTool
                 {
                     done.Add(v);
                     loop.Add(e);
-                    v = e.to.Position;
+                    v = same[e.to.Position];
                 }
                 if (v != start || loop.Count < 3 || loop.Count > maxCorners)
                     continue;

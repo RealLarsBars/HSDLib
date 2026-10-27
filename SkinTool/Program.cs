@@ -11,7 +11,7 @@ namespace SkinTool
     static class Program
     {
         const string Usage =
-@"skintool build --model <model.obj|model.zip> --dat <costume.dat> [--dat <costume.dat> ...] --out <folder|out.zip>
+@"skintool build --model <model.obj/.fbx/.dae|model.zip> --dat <costume.dat> [--dat <costume.dat> ...] --out <folder|out.zip>
                [--fighter <Pl**.dat>] [--bones 41,22,...] [--scale 1.0] [--rotate 0] [--textures <costume.dat>=<folder> ...]
                [--legs auto|separate|body|cut] [--arms auto|fighter|body] [--leg-band 0.3] [--keep-shape]
                [--preview <out.png> [--anims <Pl**AJ.dat>]]

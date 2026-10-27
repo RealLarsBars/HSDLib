@@ -6,14 +6,14 @@ using System.Linq;
 namespace SkinTool
 {
     /// <summary>
-    /// Lets a model arrive as one .zip (OBJ, MTL and textures together), which is how
+    /// Lets a model arrive as one .zip (a model with its textures), which is how
     /// uploads from the Top-8er panel come in.
     /// </summary>
     static class ModelZip
     {
         const long MaxUnpacked = 200L * 1024 * 1024;
 
-        /// <summary>Unpacks the zip into <paramref name="folder"/> and returns the OBJ inside.</summary>
+        /// <summary>Unpacks the zip into <paramref name="folder"/> and returns the model inside.</summary>
         public static string Extract(string zip, string folder)
         {
             using var archive = ZipFile.OpenRead(zip);
@@ -35,12 +35,12 @@ namespace SkinTool
                 entry.ExtractToFile(target, true);
             }
 
-            var objs = Directory.EnumerateFiles(folder, "*.obj", SearchOption.AllDirectories).ToList();
-            if (objs.Count == 0)
-                throw new Exception("the zip has no .obj file");
-            if (objs.Count > 1)
-                throw new Exception($"the zip has {objs.Count} .obj files; put one model in it");
-            return objs[0];
+            var models = Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories).Where(ModelImport.IsModel).ToList();
+            if (models.Count == 0)
+                throw new Exception("the zip has no model (.obj, .fbx or .dae)");
+            if (models.Count > 1)
+                throw new Exception($"the zip has {models.Count} models ({string.Join(", ", models.Select(Path.GetFileName))}); put one in it");
+            return models[0];
         }
 
         public static void Pack(string folder, string zip)
