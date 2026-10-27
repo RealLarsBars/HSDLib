@@ -949,6 +949,22 @@ namespace SkinTool
                     w[i] = (float[])sum.Clone();
             }
 
+            // 3b. an outline shell is a slightly bigger copy of the model around it: each of its points moves
+            // exactly as the nearest point of the model, or in a pose it slides across the model and covers it
+            var shell = new bool[n];
+            var inModel = new bool[n];
+            foreach (var t in model.Triangles)
+                foreach (var c in new[] { t.A.Position, t.B.Position, t.C.Position })
+                    if (t.Outline) shell[c] = true; else inModel[c] = true;
+            var modelPoints = Enumerable.Range(0, n).Where(i => inModel[i]).ToArray();
+            if (modelPoints.Length > 0)
+                for (int i = 0; i < n; i++)
+                    if (shell[i] && !inModel[i])
+                    {
+                        int near = modelPoints.MinBy(j => Vector3.DistanceSquared(Positions[i], Positions[j]));
+                        w[i] = (float[])w[near].Clone();
+                    }
+
             // 4. keep the strongest few influences, as the game expects
             Weights = new SkinBuilder.Influence[n][];
             for (int i = 0; i < n; i++)

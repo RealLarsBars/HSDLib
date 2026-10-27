@@ -135,10 +135,11 @@ namespace SkinTool
                 };
                 // drawn from both sides, like Fox's scarf: where the body bends hard (a round body
                 // working as legs) faces fold over, and one-sided faces would leave see-through holes.
-                // An outline shell faces inwards and is drawn from its back only, so it shows as an edge
-                // (the game's front is the other way round from an OBJ's, so that's CULLFRONT here).
+                // An outline shell faces inwards: only its far side, seen from inside, may show, so it reads as
+                // an edge. Its winding runs with its normals, the other way round from Fox's own meshes (which
+                // are CULLFRONT), so it takes CULLBACK; CULLFRONT drew its near side over the model in game.
                 for (var pobj = dobj.Pobj; pobj != null; pobj = pobj.Next)
-                    pobj.Flags = (pobj.Flags & ~(POBJ_FLAG.CULLFRONT | POBJ_FLAG.CULLBACK)) | (group.Key.Outline ? POBJ_FLAG.CULLFRONT : 0);
+                    pobj.Flags = (pobj.Flags & ~(POBJ_FLAG.CULLFRONT | POBJ_FLAG.CULLBACK)) | (group.Key.Outline ? POBJ_FLAG.CULLBACK : 0);
                 real.Add(dobj);
             }
 
