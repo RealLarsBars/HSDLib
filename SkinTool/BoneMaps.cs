@@ -64,6 +64,12 @@ namespace SkinTool
         /// </summary>
         public static readonly HashSet<string> StretchyFeet = new() { "Pr" };
 
+        /// <summary>
+        /// Fighters whose long dress hides where their legs part: the surface splits near the hem, far below
+        /// the hip joints, so a skin's legs would only reach the fighter's knees.
+        /// </summary>
+        public static readonly HashSet<string> Dress = new() { "Zd", "Pe" };
+
         /// <summary>The fighter's two-letter code from any of its file names (PlFx.dat, PlFxNr.dat).</summary>
         public static string Code(string file)
         {
