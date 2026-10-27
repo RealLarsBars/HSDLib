@@ -928,6 +928,9 @@ namespace SkinTool
                 .Select(part => Enumerable.Range(0, n).Where(i => Part[i] == part).ToList())
                 .Where(members => members.Count > 0 && BodyPiece[members[0]])
                 .ToList();
+            // the points of limb pieces (bendy, not body) touching a body piece
+            float reach = (Positions.Max(q => q.Y) - Positions.Min(q => q.Y)) * 0.06f;
+            var joins = Enumerable.Range(0, n).Where(i => !BodyPiece[i] && !RigidPart[i] && adj[i].Any(j => BodyPiece[j])).ToList();
             foreach (var group in pieces.GroupBy(aboveNeck))
             {
                 var own = new float[boneCount];
@@ -940,8 +943,15 @@ namespace SkinTool
                     continue;
                 Normalize(own);
                 Report += $"{group.Count()} body pieces{(group.Key ? " above the neck" : "")} move as one, follow bone {Array.IndexOf(own, own.Max())}\n";
+                // except where an arm or leg piece joins on: there the piece keeps the weights it shares with
+                // the limb, fading into the one blend, or the limb comes away from it (Peggy's arms from her
+                // shirt's armholes)
                 foreach (var i in group.SelectMany(m => m))
-                    w[i] = (float[])own.Clone();
+                {
+                    float k = joins.Count > 0 ? SmoothStep(0, reach, MathF.Sqrt(joins.Min(j => Vector3.DistanceSquared(Positions[i], Positions[j])))) : 1;
+                    for (int b = 0; b < boneCount; b++)
+                        w[i][b] = k * own[b] + (1 - k) * w[i][b];
+                }
             }
 
             var body = Enumerable.Range(0, n).Where(i => !RigidPart[i]).ToList();
