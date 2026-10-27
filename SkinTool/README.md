@@ -62,6 +62,13 @@ area grows past 4x, which the original costumes and a well fitted model never ge
 `warning:` line naming the part and the move (`stretch <costume.dat> <Pl**.dat> <Pl**AJ.dat>` runs it
 on any costume).
 
+**Character select portraits.** `--portraits <folder>` (with `--fighter` and `--anims`) draws each
+costume as a 136x188 portrait with a see-through background, as community skins ship them
+(`PlFxNr_csp.png`, also put next to the costumes): the fighter standing (Wait1), turned towards the
+camera, cropped to the head and upper body, flat lit, with a soft drop shadow up and to the left.
+Peach's items and Ganondorf's sword stay hidden. `portrait <out.png> <costume.dat> <Pl**.dat>
+<Pl**AJ.dat> [--anim Wait1] [--at 0] [--yaw -30]` draws one in another pose.
+
 **Rules per model.** When the automatic choice is wrong, say how the model works, on the command
 line or in a `skin.txt` next to the OBJ (or in the zip):
 

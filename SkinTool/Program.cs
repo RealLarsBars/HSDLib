@@ -15,10 +15,11 @@ namespace SkinTool
                [--fighter <Pl**.dat>] [--bones 41,22,...] [--scale 1.0] [--width 1.0] [--height 1.0] [--rotate 0] [--textures <costume.dat>=<folder> ...]
                [--legs auto|separate|body|cut] [--arms auto|fighter|body] [--neck auto|none|0.6] [--leg-band 0.3] [--keep-shape]
                [--pick <model in the zip or folder>] [--weapon <name>=<model|zip> [--weapon-pick <name>=<model>] [--weapon-flip <name>] ...]
-               [--preview <out.png> [--anims <Pl**AJ.dat>]] [--overlay <out.png> [--fit-only]]
+               [--preview <out.png> [--anims <Pl**AJ.dat>]] [--overlay <out.png> [--fit-only]] [--portraits <folder>]
 skintool models <zip|folder> --out <folder>
 skintool weapons <costume.dat>
 skintool stretch <costume.dat> <Pl**.dat> <Pl**AJ.dat>
+skintool portrait <out.png> <costume.dat> <Pl**.dat> <Pl**AJ.dat> [--anim Wait1] [--at 0] [--yaw -30]
 skintool inspect <costume.dat>
 skintool check <original.dat> <skin.dat>
 skintool preview <out.png> <costume.dat> [<costume.dat> ...] [--anims <Pl**.dat> <Pl**AJ.dat>] [--bones]
@@ -43,6 +44,8 @@ build    Swaps the model into every costume given, keeping each costume's skelet
          --weapon swaps one of the fighter's weapons (pan, sword, hammer; see weapons) for another model,
          fitted over the original; --weapon-flip turns it end for end. Weapons not given keep the costume's own.
          --preview renders the first costume, in the fighter's real animations with --anims (needs --fighter).
+         --portraits draws a character select portrait of each costume (136x188, <costume>_csp.png) into
+         the folder and next to the costumes (needs --fighter and --anims).
 models   Lists the models in a zip or folder and draws each one (<folder>/<n>.png), to pick from.
 weapons  Lists the weapons a fighter holds, by the names --weapon takes.
 stretch  Poses a finished costume in the fighter's moves and warns about parts that get pulled apart
@@ -74,6 +77,7 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                     case "models": return Models(args.Skip(1).ToArray());
                     case "weapons": return ListWeapons(args[1]);
                     case "stretch": return Stretch(args);
+                    case "portrait": return Portrait(args);
                     default:
                         Console.WriteLine(Usage);
                         return 1;
@@ -243,7 +247,7 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
 
         static int Build(string[] args)
         {
-            string model = null, outDir = null, fighterDat = null, previewPng = null, animDat = null, pick = null, overlayPng = null;
+            string model = null, outDir = null, fighterDat = null, previewPng = null, animDat = null, pick = null, overlayPng = null, portraitDir = null;
             bool fitOnly = false;
             var weaponFiles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var weaponPicks = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -277,6 +281,7 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                     case "--pick": pick = Next(); break;
                     case "--overlay": overlayPng = Next(); break;
                     case "--fit-only": fitOnly = true; break;
+                    case "--portraits": portraitDir = Next(); break;
                     case "--weapon":
                         var w = Next().Split('=', 2);
                         if (w.Length != 2) throw new Exception("--weapon takes name=model");
@@ -357,6 +362,21 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                         Console.WriteLine($"warning: {warning}");
                 }
 
+                // a character select portrait of each costume, next to it (PlFxNr_csp.png) and in --portraits
+                if (portraitDir != null && animDat != null && fighterDat != null && !fitOnly)
+                {
+                    Directory.CreateDirectory(portraitDir);
+                    var pose = PortraitPose(fighterDat, animDat);
+                    var data = Slots.Load(fighterDat);
+                    foreach (var dat in dats)
+                    {
+                        var name = Path.GetFileNameWithoutExtension(dat) + "_csp.png";
+                        Preview.Portrait(Path.Combine(outDir, Path.GetFileName(dat)), data, pose, Path.Combine(portraitDir, name));
+                        File.Copy(Path.Combine(portraitDir, name), Path.Combine(outDir, name), true);
+                        Console.WriteLine($"portrait {name}");
+                    }
+                }
+
                 if (zipOut != null && !fitOnly)
                 {
                     ModelZip.Pack(outDir, zipOut);
@@ -378,6 +398,33 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
             var poses = Animations.Load(args[2], args[3], Animations.TestPoses);
             var warning = Preview.StretchCheck(args[1], Slots.Load(args[2]), poses);
             Console.WriteLine(warning != null ? $"warning: {warning}" : "no bad stretching");
+            return 0;
+        }
+
+        // the pose character select portraits are drawn in, unless one is given: standing (Pikachu and the
+        // Ice Climbers call it Wait)
+        static readonly (string Name, float At)[] PortraitPoses = { ("Wait1", 0f), ("Wait", 0f) };
+
+        static Preview.Pose PortraitPose(string fighterDat, string animDat) =>
+            PortraitPoses.Select(p => Animations.Load(fighterDat, animDat, new[] { p }).FirstOrDefault()).FirstOrDefault(p => p != null)
+            ?? new Preview.Pose { Name = "bind" };
+
+        /// <summary>skintool portrait out.png costume.dat Pl**.dat Pl**AJ.dat [--anim Wait1] [--at 0] [--yaw -30]</summary>
+        static int Portrait(string[] args)
+        {
+            string name = null;
+            float at = 0, yaw = -30;
+            for (int i = 5; i + 1 < args.Length; i += 2)
+                switch (args[i])
+                {
+                    case "--anim": name = args[i + 1]; break;
+                    case "--at": at = float.Parse(args[i + 1], CultureInfo.InvariantCulture); break;
+                    case "--yaw": yaw = float.Parse(args[i + 1], CultureInfo.InvariantCulture); break;
+                }
+            var pose = name == null ? PortraitPose(args[3], args[4])
+                : Animations.Load(args[3], args[4], new[] { (name, at) }).FirstOrDefault() ?? throw new Exception($"no animation called {name}");
+            Preview.Portrait(args[2], Slots.Load(args[3]), pose, args[1], yaw);
+            Console.WriteLine($"wrote {args[1]}");
             return 0;
         }
 
