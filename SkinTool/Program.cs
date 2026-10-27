@@ -13,6 +13,7 @@ namespace SkinTool
         const string Usage =
 @"skintool build --model <model.obj|model.zip> --dat <costume.dat> [--dat <costume.dat> ...] --out <folder|out.zip>
                [--fighter <Pl**.dat>] [--bones 41,22,...] [--scale 1.0] [--rotate 0] [--textures <costume.dat>=<folder> ...]
+               [--legs auto|separate|body|cut] [--arms auto|fighter|body] [--leg-band 0.3] [--keep-shape]
                [--preview <out.png> [--anims <Pl**AJ.dat>]]
 skintool inspect <costume.dat>
 skintool check <original.dat> <skin.dat>
@@ -25,6 +26,10 @@ build    Swaps the model into every costume given, keeping each costume's skelet
          --bones 41,22,... picks the bones to weight to; by default the fighter's bone map, if it has one.
          --textures swaps in PNGs from another folder for one costume (matched by file name).
          A .zip model (OBJ, MTL and textures) is unpacked first; an --out ending in .zip collects the costumes in one zip.
+         --legs says how the model's legs work: separate legs, a body that works as legs (the bottom
+         bends with the fighter's legs), or a bottom cut into two legs; auto picks from its shape.
+         --arms fighter always moves its arms onto the fighter's, body keeps them mostly with the body.
+         The same rules can come with the model in a skin.txt next to the OBJ (""legs = body"").
          --preview renders the first costume, in the fighter's real animations with --anims (needs --fighter).
 inspect  Lists a costume's joints and meshes.
 check    Compares a finished skin with the original costume, as the build does.
@@ -89,6 +94,45 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
             return (positions, normals);
         }
 
+        static string Rule(string name, string value, params string[] allowed)
+        {
+            value = value.Trim().ToLowerInvariant();
+            return allowed.Contains(value) ? value : throw new Exception($"{name} must be one of {string.Join(", ", allowed)}, not {value}");
+        }
+
+        /// <summary>
+        /// Rules that come with a model, in a skin.txt next to its OBJ, one "name = value" per line:
+        /// legs, arms, scale, rotate, leg-band. Options given on the command line win.
+        /// </summary>
+        static void ReadRules(string model, AutoRig.Options opt, HashSet<string> given)
+        {
+            var path = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(model)), "skin.txt");
+            if (!File.Exists(path))
+                return;
+            foreach (var raw in File.ReadLines(path))
+            {
+                var line = raw.Split('#')[0].Trim();
+                if (line.Length == 0)
+                    continue;
+                var kv = line.Split('=', 2);
+                if (kv.Length != 2)
+                    throw new Exception($"skin.txt: \"{line}\" should look like name = value");
+                string name = kv[0].Trim().ToLowerInvariant(), value = kv[1].Trim();
+                if (given.Contains("--" + name))
+                    continue;
+                switch (name)
+                {
+                    case "legs": opt.Legs = Rule(name, value, "auto", "separate", "body", "cut"); break;
+                    case "arms": opt.Arms = Rule(name, value, "auto", "fighter", "body"); break;
+                    case "scale": opt.Scale = float.Parse(value, CultureInfo.InvariantCulture); break;
+                    case "rotate": opt.RotateY = float.Parse(value, CultureInfo.InvariantCulture); break;
+                    case "leg-band": opt.LegBand = float.Parse(value, CultureInfo.InvariantCulture); break;
+                    default: throw new Exception($"skin.txt: unknown rule {name} (legs, arms, scale, rotate, leg-band)");
+                }
+                Console.WriteLine($"rule from skin.txt: {name} = {value}");
+            }
+        }
+
         static int Check(string original, string skin)
         {
             var before = Validator.Snapshot((HSD_JOBJ)new HSDRawFile(original).Roots[0].Data);
@@ -120,6 +164,8 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                     case "--scale": opt.Scale = float.Parse(Next(), CultureInfo.InvariantCulture); break;
                     case "--bones": opt.Bones = Next().Split(',').Select(int.Parse).ToArray(); break;
                     case "--keep-shape": opt.Conform = false; break;
+                    case "--legs": opt.Legs = Rule("legs", Next(), "auto", "separate", "body", "cut"); break;
+                    case "--arms": opt.Arms = Rule("arms", Next(), "auto", "fighter", "body"); break;
                     case "--leg-band": opt.LegBand = float.Parse(Next(), CultureInfo.InvariantCulture); break;
                     case "--cut-legs": opt.LegCut = float.Parse(Next(), CultureInfo.InvariantCulture); break;
                     case "--rotate": opt.RotateY = float.Parse(Next(), CultureInfo.InvariantCulture); break;
@@ -152,6 +198,7 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                     outDir = Path.Combine(scratch, "out");
                 }
 
+                ReadRules(model, opt, args.Where(a => a.StartsWith("--")).ToHashSet());
                 BuildCostumes(model, dats, outDir, fighterDat, textureFolders, opt);
 
                 if (previewPng != null)
@@ -182,6 +229,9 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
             Directory.CreateDirectory(outDir);
             var fighterData = fighterDat != null ? Slots.Load(fighterDat) : null;
             var obj = ObjModel.Load(model);
+            int holes = obj.CloseSmallHoles();
+            if (holes > 0)
+                Console.WriteLine($"closed {holes} small openings (open claw or tooth bases)");
             Console.WriteLine($"model: {obj.Positions.Count} vertices, {obj.Triangles.Count} triangles, {obj.Textures.Count} materials");
 
             // fit and weight once against the first costume; every costume shares the skeleton

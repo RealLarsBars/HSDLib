@@ -51,6 +51,14 @@ namespace SkinTool
             // instead, cut that share into two separate legs stretched down the fighter's (0 = don't)
             public float LegCut = 0;
 
+            // the model's legs: "auto" works it out, "separate" (it has real legs), "body" (its body works
+            // as legs) or "cut" (its bottom is cut into two legs down the fighter's)
+            public string Legs = "auto";
+
+            // the model's arms: "auto", "fighter" (always moved onto the fighter's arms) or "body"
+            // (mostly stay with the body)
+            public string Arms = "auto";
+
             // parts with fewer vertices than this share of the model move as one piece with the body around them
             public float RigidPartShare = 0.15f;
         }
@@ -162,7 +170,9 @@ namespace SkinTool
             // shins: its feet follow the fighter's feet and its body starts at the hips.
             float lowerTop = fighterCrotch;
             int[] legSide = null;
-            bool stubby = modelCrotch < fighterCrotch * 0.5f;
+            bool stubby = opt.Legs switch { "separate" => false, "body" or "cut" => true, _ => modelCrotch < fighterCrotch * 0.5f };
+            if (opt.Legs == "cut" && opt.LegCut <= 0)
+                opt.LegCut = 0.2f;
             if (stubby && opt.Conform && opt.LegCut > 0 && opt.Roles != null && new[] { "lle", "rle" }.All(opt.Roles.ContainsKey))
             {
                 legSide = Legs.Split(model, rot, opt.LegCut);
@@ -292,7 +302,7 @@ namespace SkinTool
                 // only an arm already near the fighter's is moved onto it: lifting a low arm up to the
                 // shoulder bends it into a W that flaps about when running
                 float fittedY = (a.y - origin.Y) * scale + target.Y;
-                bool near = MathF.Abs(fittedY - a.fy) < 0.15f * fighterSize.Y;
+                bool near = opt.Arms switch { "fighter" => true, "body" => false, _ => MathF.Abs(fittedY - a.fy) < 0.15f * fighterSize.Y };
                 if (opt.Conform && near && opt.Roles != null && opt.Roles.TryGetValue(side + "sh", out int sh) && opt.Roles.TryGetValue(side + "ha", out int ha))
                 {
                     var chain = new List<Vector3> { skeleton.Position(sh) };
@@ -715,8 +725,12 @@ namespace SkinTool
                 if (members.Count == 0 || !RigidPart[members[0]])
                     continue;
 
+                // the part follows the body where it's attached: weights come from around its base (the
+                // quarter of it nearest the body), not its tip, so it moves exactly as the spot it sits in
+                float Gap(int i) => body.Count > 0 ? body.Min(j => Vector3.DistanceSquared(Positions[i], Positions[j])) : 0;
+                var basePoints = members.OrderBy(Gap).Take(Math.Max(1, members.Count / 4)).ToList();
                 var sum = new float[boneCount];
-                foreach (var i in members)
+                foreach (var i in basePoints)
                 {
                     var near = body.Count > 0
                         ? body.OrderBy(j => Vector3.DistanceSquared(Positions[i], Positions[j])).Take(4)

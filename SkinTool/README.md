@@ -38,6 +38,24 @@ differently (Falcon's, Kirby's) get the model moved with their bones. `--texture
 swaps in PNGs from another folder (matched by file name) for one costume. `--model` can be a .zip of
 the OBJ, MTL and textures, and an `--out` ending in `.zip` collects the costumes in one zip.
 
+**Legs.** A model with no real legs (a round body on little feet) is found from its shape. Its body
+works as legs: the bottom 30% (`--leg-band`) bends with the fighter's legs, left half with the left
+leg, fading into the hips towards the top, the middle and the back. It's sized to 75% of the
+fighter's height. Arms far below the fighter's mostly stay with the body. Small openings (the open
+bases of claws and teeth) are closed, and every mesh is drawn from both sides, so bending never
+shows holes.
+
+**Rules per model.** When the automatic choice is wrong, say how the model works, on the command
+line or in a `skin.txt` next to the OBJ (or in the zip):
+
+```
+legs = body       # auto | separate | body | cut (cut: two legs down the fighter's legs)
+arms = auto       # auto | fighter (always onto the fighter's arms) | body
+scale = 1.1
+rotate = 180
+leg-band = 0.3
+```
+
 Other commands:
 
 - `check <original.dat> <skin.dat>`: same skeleton, flags and mesh count; weights valid.

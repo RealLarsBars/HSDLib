@@ -158,6 +158,77 @@ namespace SkinTool
             return copy;
         }
 
+        /// <summary>
+        /// Closes small openings, like the open bases of claws and teeth that sit inside the body in the
+        /// source model. Once the body bends a little differently from the part, the opening shows as a
+        /// hole. Big openings (a mouth, an open cape) are left alone. Returns how many were closed.
+        /// </summary>
+        public int CloseSmallHoles(int maxCorners = 8, float maxShare = 0.05f)
+        {
+            var min = new Vector3(float.MaxValue);
+            var max = new Vector3(float.MinValue);
+            foreach (var p in Positions)
+            {
+                min = Vector3.Min(min, p);
+                max = Vector3.Max(max, p);
+            }
+            float limit = (max - min).Length() * maxShare;
+
+            static (int, int) Key(int a, int b) => a < b ? (a, b) : (b, a);
+            var count = new Dictionary<(int, int), int>();
+            foreach (var t in Triangles)
+                foreach (var (a, b) in new[] { (t.A, t.B), (t.B, t.C), (t.C, t.A) })
+                    count[Key(a.Position, b.Position)] = count.GetValueOrDefault(Key(a.Position, b.Position)) + 1;
+
+            // open edges, each in the direction its triangle runs, so the cap runs the other way
+            var next = new Dictionary<int, (Corner from, Corner to, Triangle tri)>();
+            foreach (var t in Triangles)
+                foreach (var (a, b) in new[] { (t.A, t.B), (t.B, t.C), (t.C, t.A) })
+                    if (count[Key(a.Position, b.Position)] == 1)
+                        next[b.Position] = (b, a, t);
+
+            int closed = 0;
+            var done = new HashSet<int>();
+            foreach (var start in next.Keys.ToList())
+            {
+                if (done.Contains(start))
+                    continue;
+                var loop = new List<(Corner from, Corner to, Triangle tri)>();
+                int v = start;
+                while (next.TryGetValue(v, out var e) && !done.Contains(v) && loop.Count <= maxCorners)
+                {
+                    done.Add(v);
+                    loop.Add(e);
+                    v = e.to.Position;
+                }
+                if (v != start || loop.Count < 3 || loop.Count > maxCorners)
+                    continue;
+
+                var middle = loop.Aggregate(Vector3.Zero, (s, e) => s + Positions[e.from.Position]) / loop.Count;
+                if (loop.Max(e => Vector3.Distance(Positions[e.from.Position], middle)) > limit)
+                    continue;
+
+                var normal = Vector3.Zero;
+                foreach (var e in loop)
+                    normal += Vector3.Cross(Positions[e.to.Position] - Positions[e.from.Position], middle - Positions[e.from.Position]);
+                int center = Positions.Count;
+                Positions.Add(middle);
+                int n = Normals.Count;
+                Normals.Add(normal.LengthSquared() > 0 ? Vector3.Normalize(normal) : Vector3.UnitY);
+                foreach (var e in loop)
+                    Triangles.Add(new Triangle
+                    {
+                        A = new Corner { Position = e.from.Position, UV = e.to.UV, Normal = n },
+                        B = new Corner { Position = e.to.Position, UV = e.to.UV, Normal = n },
+                        C = new Corner { Position = center, UV = e.to.UV, Normal = n },
+                        Material = e.tri.Material,
+                        Object = e.tri.Object,
+                    });
+                closed++;
+            }
+            return closed;
+        }
+
         public string TextureOf(string material)
         {
             return material != null && Textures.TryGetValue(material, out var t) && File.Exists(t) ? t : null;
