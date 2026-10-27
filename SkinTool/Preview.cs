@@ -34,6 +34,8 @@ namespace SkinTool
             public Vert A, B, C;
             public Tex Tex;
             public int Slot;
+            // drawn from both sides in game (the mesh's cull flags are clear), as skin meshes are
+            public bool TwoSided;
         }
 
         // joint index -> extra rotation in degrees (x, y, z), per pose
@@ -54,7 +56,7 @@ namespace SkinTool
         /// The fitted model laid over the original costume, front and side, in the bind pose, to see how its
         /// size and turn compare before building.
         /// </summary>
-        public static void Overlay(string costume, HSDRaw.Melee.Pl.SBM_FighterData fighter, ObjModel model, Vector3[] positions, string output)
+        public static void Overlay(string costume, HSDRaw.Melee.Pl.SBM_FighterData fighter, ObjModel model, Vector3[] positions, string output, float neckY = float.NaN)
         {
             const int cell = 320;
             var root = (HSD_JOBJ)new HSDRawFile(costume).Roots[0].Data;
@@ -77,13 +79,34 @@ namespace SkinTool
             }
 
             var bind = new Pose { Name = "bind" };
+            // the blend, plus the character and the model on their own (the model on a see-through
+            // background), so the panel can fade one over the other
             var sheet = new Bitmap(cell * 2, cell);
+            var fighterSheet = new Bitmap(cell * 2, cell);
+            var modelSheet = new Bitmap(cell * 2, cell, clear: true);
             for (int v = 0; v < 2; v++)
             {
                 var img = Render(sk, original, bind, v * 90f, cell);
-                img.Blend(Render(sk, tris, bind, v * 90f, cell, cull: false, clear: true), 0.6f);
+                var mine = Render(sk, tris, bind, v * 90f, cell, cull: false, clear: true);
+                fighterSheet.Draw(img, v * cell, 0);
+                img.Blend(mine, 0.6f);
+                // where the head starts: a dashed line, placed the way Render places heights
+                if (!float.IsNaN(neckY))
+                {
+                    int hip = Math.Min(4, sk.Joints.Count - 1);
+                    int y = (int)MathF.Round(cell * 0.92f - (neckY - sk.Position(hip).Y + 8.3f) * cell / 26f);
+                    for (int x = 0; x < cell && y >= 0 && y < cell - 1; x++)
+                        if (x / 6 % 2 == 0)
+                            for (int dy = 0; dy < 2; dy++)
+                                foreach (var b in new[] { img, mine })
+                                    b.Set(x, y + dy, new Vector3(1f, 0.85f, 0.2f));
+                }
                 sheet.Draw(img, v * cell, 0);
+                modelSheet.Draw(mine, v * cell, 0);
             }
+            var stem = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(output)), System.IO.Path.GetFileNameWithoutExtension(output));
+            fighterSheet.SavePng(stem + "-fighter.png");
+            modelSheet.SavePng(stem + "-model.png");
             sheet.SavePng(output);
             Console.WriteLine($"wrote {output}");
         }
@@ -228,6 +251,75 @@ namespace SkinTool
             return 0;
         }
 
+        /// <summary>
+        /// Poses the skin in each test pose and finds where it gets pulled apart: triangles whose longest
+        /// edge grows to several times its length at rest, the sign of a part following bones it doesn't
+        /// belong to (a head fanning out into wings). Returns a line to show the user, or null when the
+        /// skin holds together.
+        /// </summary>
+        public static string StretchCheck(string dat, HSDRaw.Melee.Pl.SBM_FighterData fighter, List<Pose> poses)
+        {
+            var file = new HSDRawFile(dat);
+            var sk = new Skeleton((HSD_JOBJ)file.Roots[0].Data);
+            var hidden = fighter != null ? Slots.HiddenByDefault(fighter) : new HashSet<int>();
+            var weaponSlots = fighter != null ? Weapons.AllSlots(fighter, BoneMaps.Code(dat)) : new HashSet<int>();
+            var tris = Decode(sk).Where(t => !hidden.Contains(t.Slot) && !weaponSlots.Contains(t.Slot)).ToList();
+            if (tris.Count == 0)
+                return null;
+
+            static float Longest(Vector3 a, Vector3 b, Vector3 c) => MathF.Max(Vector3.Distance(a, b), MathF.Max(Vector3.Distance(b, c), Vector3.Distance(c, a)));
+            static float Area(Tri t) => Vector3.Cross(t.B.Pos - t.A.Pos, t.C.Pos - t.A.Pos).Length() / 2;
+            var rest = tris.Select(t => Longest(t.A.Pos, t.B.Pos, t.C.Pos)).ToArray();
+            var worst = new float[tris.Count];
+            var worstPose = new string[tris.Count];
+            foreach (var pose in poses)
+            {
+                var skin = PosedSkinning(sk, pose);
+                var posed = new Dictionary<Vert, Vector3>();
+                Vector3 P(Vert v)
+                {
+                    if (posed.TryGetValue(v, out var p)) return p;
+                    p = Vector3.Zero;
+                    for (int i = 0; i < v.Bones.Length; i++)
+                        p += Vector3.Transform(v.Pos, skin[v.Bones[i]]) * v.Weights[i];
+                    return posed[v] = p;
+                }
+                for (int i = 0; i < tris.Count; i++)
+                {
+                    if (rest[i] < 1e-5f) continue;
+                    float r = Longest(P(tris[i].A), P(tris[i].B), P(tris[i].C)) / rest[i];
+                    if (r > worst[i]) { worst[i] = r; worstPose[i] = pose.Name; }
+                }
+            }
+
+            // by area, so big pieces count and slivers at elbows and knees don't
+            float total = tris.Sum(Area);
+            var bad = Enumerable.Range(0, tris.Count).Where(i => worst[i] > StretchLimit).ToList();
+            float share = total > 0 ? bad.Sum(i => Area(tris[i])) / total : 0;
+            Console.WriteLine(FormattableString.Invariant($"stretch check: {share:P1} of the skin's area pulled to more than {StretchLimit}x in some pose"));
+            if (share < StretchWarn)
+                return null;
+
+            // where: the bone the most bad area follows, named from the fighter's bone map
+            var roles = BoneMaps.Get(BoneMaps.Code(dat)) ?? new Dictionary<string, int>();
+            int Main(Vert v) => v.Bones[Array.IndexOf(v.Weights, v.Weights.Max())];
+            int bone = bad.GroupBy(i => Main(tris[i].A)).OrderByDescending(g => g.Sum(i => Area(tris[i]))).First().Key;
+            string where = roles.FirstOrDefault(r => r.Value == bone).Key switch
+            {
+                "face" => "the head",
+                "body" or "butt" or "chest" => "the body",
+                "lsh" or "lel" or "lha" or "rsh" or "rel" or "rha" => "an arm",
+                "lle" or "lkn" or "lfb" or "lff" or "rle" or "rkn" or "rfb" or "rff" => "a leg",
+                _ => $"the part on bone {bone}",
+            };
+            string move = bad.GroupBy(i => worstPose[i]).OrderByDescending(g => g.Sum(i => Area(tris[i]))).First().Key;
+            return FormattableString.Invariant($"{share:P0} of the skin gets pulled apart in some moves, mostly around {where} (worst in {move}). It may look torn in game: check the preview, and try moving the head line or another Arms setting.");
+        }
+
+        // Past 4x by area: Fox's own skin 0.5 %, Monty on 7 fighters 0.1 to 1.5 %, Squidward with his face
+        // read as arms 2.9 % and with his head as arms 7.2 %
+        const float StretchLimit = 4f, StretchWarn = 0.025f;
+
         public static List<Pose> DefaultPoses()
         {
             // joint numbers are Fox's; most fighters share the leg and arm layout closely enough for a smoke test
@@ -311,6 +403,7 @@ namespace SkinTool
                     foreach (var pobj in dobj.Pobj.List)
                     {
                         var dl = pobj.ToDisplayList();
+                        bool twoSided = (pobj.Flags & (POBJ_FLAG.CULLBACK | POBJ_FLAG.CULLFRONT)) == 0;
                         var envs = pobj.EnvelopeWeights;
                         bool env = envs != null && pobj.HasAttribute(GXAttribName.GX_VA_PNMTXIDX);
                         int owner = pobj.SingleBoundJOBJ != null ? sk.IndexOf(pobj.SingleBoundJOBJ) : ji;
@@ -345,20 +438,20 @@ namespace SkinTool
                             {
                                 case GXPrimitiveType.Triangles:
                                     for (int i = 0; i + 2 < conv.Count; i += 3)
-                                        tris.Add(new Tri { A = conv[i], B = conv[i + 1], C = conv[i + 2], Tex = tex, Slot = slot });
+                                        tris.Add(new Tri { A = conv[i], B = conv[i + 1], C = conv[i + 2], Tex = tex, Slot = slot, TwoSided = twoSided });
                                     break;
                                 case GXPrimitiveType.TriangleStrip:
                                     // every other strip triangle runs the other way round
                                     for (int i = 2; i < conv.Count; i++)
                                         tris.Add(i % 2 == 0
-                                            ? new Tri { A = conv[i - 2], B = conv[i - 1], C = conv[i], Tex = tex, Slot = slot }
-                                            : new Tri { A = conv[i - 1], B = conv[i - 2], C = conv[i], Tex = tex, Slot = slot });
+                                            ? new Tri { A = conv[i - 2], B = conv[i - 1], C = conv[i], Tex = tex, Slot = slot, TwoSided = twoSided }
+                                            : new Tri { A = conv[i - 1], B = conv[i - 2], C = conv[i], Tex = tex, Slot = slot, TwoSided = twoSided });
                                     break;
                                 case GXPrimitiveType.Quads:
                                     for (int i = 0; i + 3 < conv.Count; i += 4)
                                     {
-                                        tris.Add(new Tri { A = conv[i], B = conv[i + 1], C = conv[i + 2], Tex = tex, Slot = slot });
-                                        tris.Add(new Tri { A = conv[i + 2], B = conv[i + 3], C = conv[i], Tex = tex, Slot = slot });
+                                        tris.Add(new Tri { A = conv[i], B = conv[i + 1], C = conv[i + 2], Tex = tex, Slot = slot, TwoSided = twoSided });
+                                        tris.Add(new Tri { A = conv[i + 2], B = conv[i + 3], C = conv[i], Tex = tex, Slot = slot, TwoSided = twoSided });
                                     }
                                     break;
                             }
@@ -445,8 +538,9 @@ namespace SkinTool
                 int maxY = Math.Min(size - 1, (int)MathF.Ceiling(MathF.Max(sa.Y, MathF.Max(sb.Y, sc.Y))));
                 float area = Edge(sa, sb, sc);
                 if (MathF.Abs(area) < 1e-6f) continue;
-                // the game doesn't draw back faces, so neither does the preview (an inside-out mesh shows)
-                if (cull && area * CullSign > 0) continue;
+                // the game doesn't draw back faces of meshes that cull them, so neither does the preview
+                // (an inside-out mesh shows); skin meshes are drawn from both sides
+                if (cull && !t.TwoSided && area * CullSign > 0) continue;
 
                 for (int y = minY; y <= maxY; y++)
                     for (int x = minX; x <= maxX; x++)

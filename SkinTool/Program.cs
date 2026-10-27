@@ -13,11 +13,12 @@ namespace SkinTool
         const string Usage =
 @"skintool build --model <model.obj/.fbx/.dae|model.zip> --dat <costume.dat> [--dat <costume.dat> ...] --out <folder|out.zip>
                [--fighter <Pl**.dat>] [--bones 41,22,...] [--scale 1.0] [--width 1.0] [--height 1.0] [--rotate 0] [--textures <costume.dat>=<folder> ...]
-               [--legs auto|separate|body|cut] [--arms auto|fighter|body] [--leg-band 0.3] [--keep-shape]
+               [--legs auto|separate|body|cut] [--arms auto|fighter|body] [--neck auto|none|0.6] [--leg-band 0.3] [--keep-shape]
                [--pick <model in the zip or folder>] [--weapon <name>=<model|zip> [--weapon-pick <name>=<model>] [--weapon-flip <name>] ...]
                [--preview <out.png> [--anims <Pl**AJ.dat>]] [--overlay <out.png> [--fit-only]]
 skintool models <zip|folder> --out <folder>
 skintool weapons <costume.dat>
+skintool stretch <costume.dat> <Pl**.dat> <Pl**AJ.dat>
 skintool inspect <costume.dat>
 skintool check <original.dat> <skin.dat>
 skintool preview <out.png> <costume.dat> [<costume.dat> ...] [--anims <Pl**.dat> <Pl**AJ.dat>] [--bones]
@@ -33,6 +34,8 @@ build    Swaps the model into every costume given, keeping each costume's skelet
          --legs says how the model's legs work: separate legs, a body that works as legs (the bottom
          bends with the fighter's legs), or a bottom cut into two legs; auto picks from its shape.
          --arms fighter always moves its arms onto the fighter's, body keeps them mostly with the body.
+         --neck is where the head starts, as a share of the model's height: everything above follows the
+         head bone alone, so a wide head or face moves as one piece. auto finds a neck, none turns it off.
          The same rules can come with the model in a skin.txt next to the OBJ (""legs = body"").
          --overlay draws the fitted model over the first costume, to check its size; with --fit-only
          that's all it does (no costumes are written, --out isn't needed).
@@ -42,6 +45,8 @@ build    Swaps the model into every costume given, keeping each costume's skelet
          --preview renders the first costume, in the fighter's real animations with --anims (needs --fighter).
 models   Lists the models in a zip or folder and draws each one (<folder>/<n>.png), to pick from.
 weapons  Lists the weapons a fighter holds, by the names --weapon takes.
+stretch  Poses a finished costume in the fighter's moves and warns about parts that get pulled apart
+         (build does the same whenever it has --anims and --fighter).
 inspect  Lists a costume's joints and meshes.
 check    Compares a finished skin with the original costume, as the build does.
 preview  Renders each costume in a few test poses, one row per costume.
@@ -68,6 +73,7 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                     case "check": return Check(args[1], args[2]);
                     case "models": return Models(args.Skip(1).ToArray());
                     case "weapons": return ListWeapons(args[1]);
+                    case "stretch": return Stretch(args);
                     default:
                         Console.WriteLine(Usage);
                         return 1;
@@ -113,6 +119,16 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
             return v >= 0.5f && v <= 2f ? v : throw new Exception($"{name} must be between 0.5 and 2, not {value}");
         }
 
+        // where the head starts: auto (find the neck), none, or a share of the model's height (0.2 to 0.95)
+        static float Neck(string value)
+        {
+            value = value.Trim().ToLowerInvariant();
+            if (value == "auto") return float.NaN;
+            if (value == "none") return 0;
+            float v = float.Parse(value, CultureInfo.InvariantCulture);
+            return v >= 0.2f && v <= 0.95f ? v : throw new Exception($"neck must be auto, none or between 0.2 and 0.95, not {value}");
+        }
+
         static string Rule(string name, string value, params string[] allowed)
         {
             value = value.Trim().ToLowerInvariant();
@@ -121,7 +137,7 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
 
         /// <summary>
         /// Rules that come with a model, in a skin.txt next to its OBJ, one "name = value" per line:
-        /// legs, arms, scale, rotate, leg-band. Options given on the command line win.
+        /// legs, arms, neck, scale, rotate, leg-band. Options given on the command line win.
         /// </summary>
         static void ReadRules(string model, AutoRig.Options opt, HashSet<string> given)
         {
@@ -148,7 +164,8 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                     case "height": opt.Height = Stretch(name, value); break;
                     case "rotate": opt.RotateY = float.Parse(value, CultureInfo.InvariantCulture); break;
                     case "leg-band": opt.LegBand = float.Parse(value, CultureInfo.InvariantCulture); break;
-                    default: throw new Exception($"skin.txt: unknown rule {name} (legs, arms, scale, width, height, rotate, leg-band)");
+                    case "neck": opt.Neck = Neck(value); break;
+                    default: throw new Exception($"skin.txt: unknown rule {name} (legs, arms, neck, scale, width, height, rotate, leg-band)");
                 }
                 Console.WriteLine($"rule from skin.txt: {name} = {value}");
             }
@@ -251,6 +268,7 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                     case "--keep-shape": opt.Conform = false; break;
                     case "--legs": opt.Legs = Rule("legs", Next(), "auto", "separate", "body", "cut"); break;
                     case "--arms": opt.Arms = Rule("arms", Next(), "auto", "fighter", "body"); break;
+                    case "--neck": opt.Neck = Neck(Next()); break;
                     case "--leg-band": opt.LegBand = float.Parse(Next(), CultureInfo.InvariantCulture); break;
                     case "--cut-legs": opt.LegCut = float.Parse(Next(), CultureInfo.InvariantCulture); break;
                     case "--width": opt.Width = Stretch("width", Next()); break;
@@ -330,6 +348,15 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                     Preview.Run(previewArgs.ToArray());
                 }
 
+                // pose the skin in the fighter's moves and warn about parts that tear or smear
+                if (animDat != null && fighterDat != null && !fitOnly)
+                {
+                    var poses = Animations.Load(fighterDat, animDat, Animations.TestPoses);
+                    var warning = Preview.StretchCheck(Path.Combine(outDir, Path.GetFileName(dats[0])), Slots.Load(fighterDat), poses);
+                    if (warning != null)
+                        Console.WriteLine($"warning: {warning}");
+                }
+
                 if (zipOut != null && !fitOnly)
                 {
                     ModelZip.Pack(outDir, zipOut);
@@ -342,6 +369,15 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                     Directory.Delete(scratch, true);
             }
 
+            return 0;
+        }
+
+        /// <summary>skintool stretch Pl**Nr.dat Pl**.dat Pl**AJ.dat: the stretch check on a finished costume</summary>
+        static int Stretch(string[] args)
+        {
+            var poses = Animations.Load(args[2], args[3], Animations.TestPoses);
+            var warning = Preview.StretchCheck(args[1], Slots.Load(args[2]), poses);
+            Console.WriteLine(warning != null ? $"warning: {warning}" : "no bad stretching");
             return 0;
         }
 
@@ -372,7 +408,7 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
             var rig = AutoRig.Run(obj, fighter, skeleton, opt);
             Console.Write(rig.Report);
             if (overlayPng != null)
-                Preview.Overlay(dats[0], fighterData, obj, rig.Positions, overlayPng);
+                Preview.Overlay(dats[0], fighterData, obj, rig.Positions, overlayPng, rig.NeckY);
             if (fitOnly)
                 return;
 
