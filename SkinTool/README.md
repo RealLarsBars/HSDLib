@@ -96,6 +96,10 @@ original's, scaled to the same length, its wide end (a pan's head, a sword's gua
 wide end. `--weapon-flip pan` turns it end for end if it comes out backwards. The preview, given
 `--fighter`, adds a row with each weapon in the hand.
 
+**Other shapes.** Samus's morph ball (and her curled-up body), Yoshi's egg and Kirby's stones are
+shapes the game shows instead of the body. A skin keeps the costume's own, so the fighter doesn't
+vanish in down-B.
+
 **Picking and sizing.** A zip or folder may hold several models: `models <zip> --out <folder>`
 lists them with a picture of each (`<n>.png`), and `--pick <path inside>` (`--weapon-pick
 pan=<path>`) chooses one. `--overlay size.png --fit-only` draws the fitted model over the first
