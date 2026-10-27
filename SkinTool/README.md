@@ -18,7 +18,10 @@ What `build` does, in the order the usual Blender + HSDRaw tutorial does it by h
    turns a model that faces the wrong way).
 2. **Weights** (the Data Transfer step): copies weights from the fighter's own mesh, onto the bones
    modders weight custom skins to (the fighter's bone map in `BoneMaps.cs`: face, body, shoulders,
-   elbows, hands, legs, knees and feet). Weights only come from the matching part of the fighter:
+   elbows, hands, legs, knees and feet). Where a mapped limb bone isn't one the costume's own model
+   follows, the joint stacked in the same spot that it does follow is used instead (only one of a
+   stacked pair bends: Yoshi's right hip, Zelda's hips), or else the joint above it (a helper the game
+   moves on its own, like Samus's cannon muzzle). Weights only come from the matching part of the fighter:
    the model's body takes the fighter's body, its arms (whatever sticks out sideways) the arms, and
    anything under its crotch the legs. A model with stubby legs gets its feet on the fighter's feet
    and its body on the hips. Arms that sit far from the fighter's arms partly stay with the body, so
@@ -103,6 +106,8 @@ Other commands:
 - `preview <out.png> <costume.dat>... [--anims Pl**.dat Pl**AJ.dat]`: renders each costume in test
   poses, or in the fighter's real animations when given its data and animation files.
 - `preview ... --bones` colours the model by the bones it follows.
-- `bonemap <costume.dat>`: where the fighter's bone map bones sit (left and right should mirror).
+- `bonemap <costume.dat>`: where the fighter's bone map bones sit (left and right should mirror), and
+  which of them the costume's model doesn't follow (and what's used instead).
+- `preview ... --anims <Pl.dat> <PlAJ.dat> --poses AttackAirB@0.25,AttackAirF@0.3`: draws chosen moves.
 - `inspect <costume.dat>`, `slots <Pl**.dat>`: list joints, meshes and visibility tables.
 - `preview ... --slots 55,56` draws only those mesh slots, to see what a slot holds.

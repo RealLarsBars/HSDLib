@@ -375,6 +375,9 @@ namespace SkinTool
                     if (opt.Roles.TryGetValue(side + "el", out int el))
                         chain.Add(skeleton.Position(el));
                     chain.Add(skeleton.Position(ha));
+                    // a hand that's the elbow itself (Samus's cannon) adds no length
+                    if (chain.Count > 2 && Vector3.Distance(chain[^1], chain[^2]) < 1e-3f)
+                        chain.RemoveAt(chain.Count - 1);
                     // past the wrist to the fingertips, as far as the fighter's arm reaches
                     float past = MathF.Max(a.fTip - MathF.Abs(chain[^1].X - fcx), 0);
                     var dir = Vector3.Normalize(chain[^1] - chain[^2]);
@@ -1018,7 +1021,7 @@ namespace SkinTool
             FighterRegion = fighter.Vertices.Select(v => BoneRegion[Remap[Dominant(v)]]).ToArray();
 
             Report += "fighter regions from the bone map: " + string.Join(", ", Enumerable.Range(0, RegionNames.Length)
-                .Select(r => (r, bones: roles.Values.Where(b => byBone[b] == r).OrderBy(b => b).ToList()))
+                .Select(r => (r, bones: roles.Values.Distinct().Where(b => byBone[b] == r).OrderBy(b => b).ToList()))
                 .Where(e => e.bones.Count > 0).Select(e => $"{RegionNames[e.r]} {string.Join(",", e.bones)}")) + "\n";
         }
 

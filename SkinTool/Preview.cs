@@ -178,12 +178,21 @@ namespace SkinTool
             var dats = args.Skip(2).ToList();
 
             // --anims Pl**.dat Pl**AJ.dat uses the fighter's real animations instead of made-up poses
+            // --poses AttackAirB@0.25,AttackAirF@0.3 picks the moves (and how far into each) to draw
+            var wanted = Animations.TestPoses;
+            int po = dats.IndexOf("--poses");
+            if (po >= 0)
+            {
+                wanted = dats[po + 1].Split(',').Select(e => e.Split('@'))
+                    .Select(e => (e[0], e.Length > 1 ? float.Parse(e[1], System.Globalization.CultureInfo.InvariantCulture) : 0.3f)).ToArray();
+                dats.RemoveRange(po, 2);
+            }
             var poses = DefaultPoses();
             int a = dats.IndexOf("--anims");
             if (a >= 0)
             {
                 poses = new List<Pose> { new Pose { Name = "bind" } };
-                poses.AddRange(Animations.Load(dats[a + 1], dats[a + 2], Animations.TestPoses));
+                poses.AddRange(Animations.Load(dats[a + 1], dats[a + 2], wanted));
                 dats.RemoveRange(a, 3);
             }
             // --bones colours each vertex by the bones it follows instead of its texture
@@ -301,7 +310,7 @@ namespace SkinTool
                 return null;
 
             // where: the bone the most bad area follows, named from the fighter's bone map
-            var roles = BoneMaps.Get(BoneMaps.Code(dat)) ?? new Dictionary<string, int>();
+            var roles = BoneMaps.Get(BoneMaps.Code(dat), (HSD_JOBJ)file.Roots[0].Data) ?? new Dictionary<string, int>();
             int Main(Vert v) => v.Bones[Array.IndexOf(v.Weights, v.Weights.Max())];
             int bone = bad.GroupBy(i => Main(tris[i].A)).OrderByDescending(g => g.Sum(i => Area(tris[i]))).First().Key;
             string where = roles.FirstOrDefault(r => r.Value == bone).Key switch

@@ -22,7 +22,7 @@ skintool stretch <costume.dat> <Pl**.dat> <Pl**AJ.dat>
 skintool portrait <out.png> <costume.dat> <Pl**.dat> <Pl**AJ.dat> [--anim Wait1] [--at 0] [--yaw -30]
 skintool inspect <costume.dat>
 skintool check <original.dat> <skin.dat>
-skintool preview <out.png> <costume.dat> [<costume.dat> ...] [--anims <Pl**.dat> <Pl**AJ.dat>] [--bones]
+skintool preview <out.png> <costume.dat> [<costume.dat> ...] [--anims <Pl**.dat> <Pl**AJ.dat> [--poses AttackAirB@0.25,...]] [--bones]
 skintool bonemap <costume.dat>
 
 build    Swaps the model into every costume given, keeping each costume's skeleton.
@@ -445,10 +445,10 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
             var skeleton = new Skeleton(firstRoot);
             var fighter = new FighterMesh(firstRoot, skeleton);
             // weight to the bones modders use for this fighter, when there's a map for it
-            var map = BoneMaps.Get(BoneMaps.Code(dats[0]));
+            var map = BoneMaps.Get(BoneMaps.Code(dats[0]), firstRoot);
             if (opt.Bones == null && map != null)
             {
-                opt.Bones = map.Values.ToArray();
+                opt.Bones = map.Values.Distinct().ToArray();
                 opt.Head = map.GetValueOrDefault("face", map.GetValueOrDefault("body", -1));
                 opt.Roles = map;
             }
