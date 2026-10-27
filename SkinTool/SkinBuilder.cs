@@ -144,7 +144,13 @@ namespace SkinTool
             }
 
             var weapons = new Dictionary<int, HSD_DOBJ>();
-            foreach (var part in WeaponParts)
+            foreach (var part in WeaponParts.Where(p => p.Original != null))
+            {
+                // its vertices already sit in the bind pose with their own bones: it goes back as it was
+                part.Original.Next = null;
+                weapons[part.Slot] = part.Original;
+            }
+            foreach (var part in WeaponParts.Where(p => p.Original == null))
             {
                 var joint = skeleton.Joints[part.Joint];
                 var dobj = new HSD_DOBJ()
