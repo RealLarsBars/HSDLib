@@ -588,6 +588,8 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                 Console.WriteLine($"closed {holes} small openings (open claw or tooth bases)");
             foreach (var note in obj.Notes)
                 Console.WriteLine(note);
+            foreach (var copy in Duplicates.Remove(obj))
+                Console.WriteLine($"left out {copy}: two versions of one part drawn together fight and come apart");
             foreach (var layer in ShadeLayers.Remove(obj))
                 Console.WriteLine($"left out {layer}: a grey shading layer over another part, which would cover it");
             if (opt.Style == "animelee")

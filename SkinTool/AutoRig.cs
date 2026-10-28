@@ -507,6 +507,22 @@ namespace SkinTool
                 int s = Slice((q.Y - min.Y) / size.Y);
                 reach[s] = MathF.Max(reach[s], MathF.Abs(q.X - cx));
             }
+            // a low-poly model (Gusteau) has heights with no point on them, and its few points sit where the
+            // outline bulges, so those heights looked wider than the rest and counted as arms: the outline is
+            // also taken along the edges, at every slice they cross
+            foreach (var t in model.Triangles)
+                foreach (var (a, b) in new[] { (t.A.Position, t.B.Position), (t.B.Position, t.C.Position), (t.C.Position, t.A.Position) })
+                {
+                    int from = Slice((pts[a].Y - min.Y) / size.Y), to = Slice((pts[b].Y - min.Y) / size.Y);
+                    if (Math.Abs(from - to) < 2)
+                        continue;
+                    for (int s = Math.Min(from, to) + 1; s < Math.Max(from, to); s++)
+                    {
+                        float y = min.Y + (s + 0.5f) / slices * size.Y;
+                        float k = Math.Clamp((y - pts[a].Y) / (pts[b].Y - pts[a].Y), 0, 1);
+                        reach[s] = MathF.Max(reach[s], MathF.Abs(pts[a].X + (pts[b].X - pts[a].X) * k - cx));
+                    }
+                }
             var bodySlices = Enumerable.Range(Slice(modelCrotch), slices - Slice(modelCrotch)).Where(s => reach[s] > 0).Select(s => reach[s]).OrderBy(r => r).ToList();
             float typical = bodySlices.Count > 0 ? bodySlices[bodySlices.Count / 2] : size.X / 2;
             var bodyReach = new float[slices];

@@ -50,6 +50,10 @@ differently (Falcon's, Kirby's) get the model moved with their bones. `--texture
 swaps in PNGs from another folder (matched by file name) for one costume. `--model` can be a .zip of
 the model and its textures, and an `--out` ending in `.zip` collects the costumes in one zip.
 
+**Second copies.** Rips sometimes carry two versions of one part on top of each other (Gusteau's gameplay
+and cutscene body and head). Drawn together they fight over which is in front and come apart in moves, so
+only one is kept: the one not named for cutscenes, or else the first.
+
 **Legs.** A model with no real legs (a round body on little feet) is found from its shape. Its body
 works as legs: the bottom 30% (`--leg-band`) bends with the fighter's legs, left half with the left
 leg, fading into the hips towards the top, the middle and the back. It's sized to 75% of the
