@@ -30,7 +30,8 @@ What `build` does, in the order the usual Blender + HSDRaw tutorial does it by h
    and its body on the hips. Arms that sit far from the fighter's arms partly stay with the body, so
    they don't get flung around the fighter's shoulders. Where the fighter's arms hang down in its bind pose
    (Ganondorf), a model's arms held out in a T-pose are bent down to hang the same way, from where they
-   leave the model's body, and take their weights from the fighter's arms. Weights are smoothed over the surface, cut to
+   leave the model's body, and take their weights from the fighter's arms (they bend at its elbow and wrist, a
+   separate hand goes with the sleeve it sits in, and they aren't stiffened to keep the hands off the floor). Weights are smoothed over the surface, cut to
    3 per vertex and normalized. Small separate pieces (claws, teeth, whiskers) move as one piece with
    the body around them. Above the neck everything follows the head alone (see Head below).
 3. **Import**: one mesh per texture, CMP textures (RGB5A3 when they have transparency), triangle strips.
