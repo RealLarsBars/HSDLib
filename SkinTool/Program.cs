@@ -22,6 +22,7 @@ skintool stretch <costume.dat> <Pl**.dat> <Pl**AJ.dat>
 skintool portrait <out.png> <costume.dat> <Pl**.dat> <Pl**AJ.dat> [--anim Wait1] [--at 0] [--yaw -30]
 skintool inspect <costume.dat>
 skintool check <original.dat> <skin.dat>
+skintool animelee <skin.dat|skins.zip|folder> --out <out.dat|out.zip|folder>
 skintool preview <out.png> <costume.dat> [<costume.dat> ...] [--anims <Pl**.dat> <Pl**AJ.dat> [--poses AttackAirB@0.25,...]] [--bones]
 skintool bonemap <costume.dat>
 
@@ -82,6 +83,7 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                     case "slots": return Slots.Dump(args);
                     case "bonemap": return BoneMaps.Dump(args[1]);
                     case "check": return Check(args[1], args[2]);
+                    case "animelee": return AnimeleeFiles(args);
                     case "models": return Models(args.Skip(1).ToArray());
                     case "weapons": return ListWeapons(args[1]);
                     case "stretch": return Stretch(args);
@@ -284,6 +286,102 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                 Console.WriteLine(p);
             Console.WriteLine(problems.Count == 0 ? "ok: same skeleton and slot count, weights valid" : $"{problems.Count} problems");
             return problems.Count == 0 ? 0 : 3;
+        }
+
+        /// <summary>
+        /// skintool animelee in.dat|in.zip|folder --out out.dat|out.zip|folder: gives finished costume files the
+        /// Animelee look. A zip or folder keeps its layout; files that aren't costumes are copied as they are.
+        /// </summary>
+        static int AnimeleeFiles(string[] args)
+        {
+            string input = args.Length > 1 ? args[1] : throw new Exception("animelee needs a .dat, .zip or folder");
+            int o = Array.IndexOf(args, "--out");
+            string output = o > 0 && o + 1 < args.Length ? args[o + 1] : throw new Exception("animelee needs --out");
+
+            bool oneDat = input.EndsWith(".dat", StringComparison.OrdinalIgnoreCase) && File.Exists(input);
+            if (oneDat && output.EndsWith(".dat", StringComparison.OrdinalIgnoreCase))
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output)));
+                return AnimeleeOne(input, output) ? 0 : 1;
+            }
+
+            // a zip unpacks into a folder of its own first (a single .dat goes in one alone)
+            string folder = input, temp = null;
+            if (File.Exists(input))
+            {
+                temp = folder = Path.Combine(Path.GetTempPath(), "animelee-" + Guid.NewGuid().ToString("N"));
+                if (oneDat)
+                {
+                    Directory.CreateDirectory(folder);
+                    File.Copy(input, Path.Combine(folder, Path.GetFileName(input)));
+                }
+                else
+                    System.IO.Compression.ZipFile.ExtractToDirectory(input, folder);
+            }
+            bool zipOut = output.EndsWith(".zip", StringComparison.OrdinalIgnoreCase);
+            string outFolder = zipOut ? Path.Combine(Path.GetTempPath(), "animelee-out-" + Guid.NewGuid().ToString("N")) : output;
+            try
+            {
+                int converted = 0;
+                foreach (var file in Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories).OrderBy(f => f))
+                {
+                    var rel = Path.GetRelativePath(folder, file);
+                    if (rel.StartsWith("__MACOSX") || Path.GetFileName(rel).StartsWith("._"))
+                        continue;
+                    var dest = Path.Combine(outFolder, rel);
+                    Directory.CreateDirectory(Path.GetDirectoryName(dest));
+                    if (!rel.EndsWith(".dat", StringComparison.OrdinalIgnoreCase) || !AnimeleeOne(file, dest, rel))
+                        File.Copy(file, dest, true);
+                    else
+                        converted++;
+                }
+                if (converted == 0)
+                    throw new Exception("no costume .dat files found");
+                if (zipOut)
+                {
+                    if (File.Exists(output))
+                        File.Delete(output);
+                    System.IO.Compression.ZipFile.CreateFromDirectory(outFolder, output);
+                }
+                Console.WriteLine($"converted {converted} costumes");
+                return 0;
+            }
+            finally
+            {
+                if (temp != null) Directory.Delete(temp, true);
+                if (zipOut && Directory.Exists(outFolder)) Directory.Delete(outFolder, true);
+            }
+        }
+
+        static bool AnimeleeOne(string input, string output, string name = null)
+        {
+            name ??= Path.GetFileName(input);
+            HSDRawFile file;
+            try
+            {
+                file = new HSDRawFile(input);
+            }
+            catch
+            {
+                Console.WriteLine($"{name}: not a Melee file, copied as it is");
+                return false;
+            }
+            if (file.Roots.Count == 0 || file.Roots[0].Data is not HSD_JOBJ root || root.TreeList.All(j => j.Dobj == null))
+            {
+                Console.WriteLine($"{name}: not a costume, copied as it is");
+                return false;
+            }
+            var before = Validator.Snapshot(root);
+            // a hand-made costume may already break a rule this tool's own skins keep (the game's own rigid
+            // meshes have no weights): only what the conversion changes counts
+            var already = Validator.Check(before, root).ToHashSet();
+            foreach (var line in AnimeleeDat.Convert(file))
+                Console.WriteLine($"{name}: {line.TrimStart()}");
+            file.Save(output);
+            var problems = Validator.Check(before, (HSD_JOBJ)new HSDRawFile(output).Roots[0].Data).Where(p => !already.Contains(p)).ToList();
+            if (problems.Count > 0)
+                throw new Exception($"{name} failed checks:\n  " + string.Join("\n  ", problems));
+            return true;
         }
 
         static int Build(string[] args)

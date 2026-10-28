@@ -106,8 +106,9 @@ namespace SkinTool
         }
 
         /// <summary>
-        /// Flattens a texture's colours (RGBA bytes) into a few bands per channel and livens them a
-        /// little, so soft painted shading reads as flat cartoon colour.
+        /// Flattens a texture's colours (RGBA bytes): brightness falls into a few bands, so soft painted
+        /// shading reads as flat cartoon colour, while each colour keeps its hue (skin stays skin-coloured),
+        /// a little livelier.
         /// </summary>
         public static void Flatten(byte[] rgba)
         {
@@ -116,12 +117,17 @@ namespace SkinTool
             {
                 float r = rgba[i], g = rgba[i + 1], b = rgba[i + 2];
                 float grey = r * 0.3f + g * 0.59f + b * 0.11f;
-                for (int c = 0; c < 3; c++)
-                {
-                    float v = grey + (rgba[i + c] - grey) * 1.15f;
-                    v = MathF.Round(Math.Clamp(v, 0, 255) / 255 * (bands - 1)) / (bands - 1) * 255;
-                    rgba[i + c] = (byte)v;
-                }
+                r = grey + (r - grey) * 1.1f;
+                g = grey + (g - grey) * 1.1f;
+                b = grey + (b - grey) * 1.1f;
+                float v = MathF.Max(r, MathF.Max(g, b));
+                if (v <= 0)
+                    continue;
+                float flat = MathF.Max(MathF.Round(Math.Clamp(v, 0, 255) / 255 * (bands - 1)), 0.5f) / (bands - 1) * 255;
+                float k = flat / v;
+                rgba[i] = (byte)Math.Clamp(r * k, 0, 255);
+                rgba[i + 1] = (byte)Math.Clamp(g * k, 0, 255);
+                rgba[i + 2] = (byte)Math.Clamp(b * k, 0, 255);
             }
         }
     }
