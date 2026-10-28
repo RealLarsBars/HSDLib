@@ -136,6 +136,14 @@ materials are drawn without the stage's lighting, and the textures' colours are 
 bands. Cut-out parts (lashes, hair cards) get no outline, and a model with its own outline keeps it.
 The outline doubles the triangle count.
 
+`skintool animelee <skin.dat|skins.zip|folder> --out <out.dat|out.zip|folder>` does the same to finished
+costume files, made by hand or by this tool. Every mesh slot stays where it is: each mesh's outline is
+added inside its own slot, drawn from one side only, with its texture coordinates on an 8x8 patch of the
+mesh's texture that no part of the mesh uses, painted black. So the game's visibility tables still line
+up, and a part the game hides (a sword in its sheath) takes its outline with it. Meshes with blinking-eye
+texture animations, two textures, see-through textures or no free patch keep no outline, but still get
+flat lighting. Non-costume files in a zip (portraits) are copied as they are.
+
 ## Leftover layers and closed eyes
 
 A small part with a plain grey texture lying on another part (the shadow over Peach's eyes) is blended in

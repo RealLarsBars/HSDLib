@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Numerics;
@@ -40,13 +41,13 @@ namespace SkinTool
 
             var shell = new int[model.Positions.Count];
             Array.Fill(shell, -1);
-            int Shell(int i)
+            int Shell(int i, float t)
             {
                 if (shell[i] < 0)
                 {
                     var n = push[i].LengthSquared() > 1e-12f ? Vector3.Normalize(push[i]) : Vector3.Zero;
                     shell[i] = model.Positions.Count;
-                    model.Positions.Add(model.Positions[i] + n * thick);
+                    model.Positions.Add(model.Positions[i] + n * t);
                 }
                 return shell[i];
             }
@@ -55,18 +56,94 @@ namespace SkinTool
             var cutouts = model.Triangles.Select(t => t.Material).Distinct().Where(m => SeeThrough(model.TextureOf(m))).ToHashSet();
             const string material = "animelee outline";
             model.Textures[material] = BlackTexture(model.Directory);
-            foreach (var t in model.Triangles.Where(t => !cutouts.Contains(t.Material)).ToList())
+            var outlined = model.Triangles.Where(t => !cutouts.Contains(t.Material)).ToList();
+            // thin parts (glasses frames) get a thinner outline, flat ones none
+            var limit = PieceThickness(outlined.Select(t => (model.Positions[t.A.Position], model.Positions[t.B.Position], model.Positions[t.C.Position])).ToList(),
+                outlined.Select(t => (t.A.Position, t.B.Position, t.C.Position)).ToList(),
+                outlined.Select(t => push[t.A.Position] + push[t.B.Position] + push[t.C.Position]).ToList(), thick);
+            for (int ti = 0; ti < outlined.Count; ti++)
             {
+                var t = outlined[ti];
+                if (limit[ti] <= 0)
+                    continue;
                 // turned inwards: wound against the way the model faces there (models aren't all wound the
                 // same way round, their normals say which way is out)
                 var a = model.Positions[t.A.Position]; var b = model.Positions[t.B.Position]; var c = model.Positions[t.C.Position];
                 bool outwards = Vector3.Dot(Vector3.Cross(b - a, c - a), push[t.A.Position] + push[t.B.Position] + push[t.C.Position]) > 0;
-                ObjModel.Corner C(ObjModel.Corner k) => new() { Position = Shell(k.Position), UV = k.UV, Normal = k.Normal };
+                ObjModel.Corner C(ObjModel.Corner k) => new() { Position = Shell(k.Position, limit[ti]), UV = k.UV, Normal = k.Normal };
                 model.Triangles.Add(outwards
                     ? new ObjModel.Triangle { A = C(t.A), B = C(t.C), C = C(t.B), Material = material, Object = material, Outline = true }
                     : new ObjModel.Triangle { A = C(t.A), B = C(t.B), C = C(t.C), Material = material, Object = material, Outline = true });
             }
             return true;
+        }
+
+        /// <summary>
+        /// How far the outline may stand off each triangle: a small, thin part (glasses frames, a strap,
+        /// lashes) would be swallowed by a full-width outline, so its piece gets one in proportion to how thick it
+        /// is (three times its volume over its surface area: a ball's radius, about a bar's half-width), or
+        /// none when it is a flat sheet. <paramref name="ids"/> are the corners' places, which join the
+        /// triangles into pieces; <paramref name="outward"/> is each triangle's outward normal.
+        /// </summary>
+        public static float[] PieceThickness(IList<(Vector3 A, Vector3 B, Vector3 C)> tris, IList<(int A, int B, int C)> ids, IList<Vector3> outward, float thick)
+        {
+            int places = ids.Count == 0 ? 0 : ids.Max(t => Math.Max(t.A, Math.Max(t.B, t.C))) + 1;
+            var parent = Enumerable.Range(0, places).ToArray();
+            int Root(int x)
+            {
+                while (parent[x] != x)
+                    x = parent[x] = parent[parent[x]];
+                return x;
+            }
+            foreach (var t in ids)
+            {
+                parent[Root(t.A)] = Root(t.B);
+                parent[Root(t.B)] = Root(t.C);
+            }
+            var piece = ids.Select(t => Root(t.A)).ToArray();
+
+            // volume and area per piece, each triangle wound to face out
+            var centre = new Dictionary<int, (Vector3 Sum, int N)>();
+            for (int i = 0; i < tris.Count; i++)
+            {
+                var c = centre.GetValueOrDefault(piece[i]);
+                centre[piece[i]] = (c.Sum + tris[i].A + tris[i].B + tris[i].C, c.N + 3);
+            }
+            var volume = new Dictionary<int, float>();
+            var area = new Dictionary<int, float>();
+            for (int i = 0; i < tris.Count; i++)
+            {
+                var o = centre[piece[i]].Sum / centre[piece[i]].N;
+                var (a, b, c) = (tris[i].A - o, tris[i].B - o, tris[i].C - o);
+                var cross = Vector3.Cross(b - a, c - a);
+                if (Vector3.Dot(cross, outward[i]) < 0)
+                    (b, c, cross) = (c, b, -cross);
+                volume[piece[i]] = volume.GetValueOrDefault(piece[i]) + Vector3.Dot(a, Vector3.Cross(b, c)) / 6;
+                area[piece[i]] = area.GetValueOrDefault(piece[i]) + cross.Length() / 2;
+            }
+            // only small parts are judged by their thickness: a big one (a body, a head of hair) is often an
+            // open surface, whose volume says nothing
+            var lo = new Dictionary<int, Vector3>();
+            var hi = new Dictionary<int, Vector3>();
+            for (int i = 0; i < tris.Count; i++)
+                foreach (var q in new[] { tris[i].A, tris[i].B, tris[i].C })
+                {
+                    lo[piece[i]] = lo.TryGetValue(piece[i], out var l) ? Vector3.Min(l, q) : q;
+                    hi[piece[i]] = hi.TryGetValue(piece[i], out var h) ? Vector3.Max(h, q) : q;
+                }
+            var limit = new Dictionary<int, float>();
+            foreach (var (p, a) in area)
+            {
+                if ((hi[p] - lo[p]).Length() > thick * 20)
+                {
+                    limit[p] = thick;
+                    continue;
+                }
+                float depth = a > 0 ? 3 * MathF.Abs(volume[p]) / a : 0;
+                float t = MathF.Min(thick, depth * 0.3f);
+                limit[p] = t < thick * 0.15f ? 0 : t;
+            }
+            return piece.Select(p => limit[p]).ToArray();
         }
 
         static bool SeeThrough(string path)
@@ -106,8 +183,9 @@ namespace SkinTool
         }
 
         /// <summary>
-        /// Flattens a texture's colours (RGBA bytes) into a few bands per channel and livens them a
-        /// little, so soft painted shading reads as flat cartoon colour.
+        /// Flattens a texture's colours (RGBA bytes): brightness falls into a few bands, so soft painted
+        /// shading reads as flat cartoon colour, while each colour keeps its hue (skin stays skin-coloured),
+        /// a little livelier.
         /// </summary>
         public static void Flatten(byte[] rgba)
         {
@@ -116,12 +194,17 @@ namespace SkinTool
             {
                 float r = rgba[i], g = rgba[i + 1], b = rgba[i + 2];
                 float grey = r * 0.3f + g * 0.59f + b * 0.11f;
-                for (int c = 0; c < 3; c++)
-                {
-                    float v = grey + (rgba[i + c] - grey) * 1.15f;
-                    v = MathF.Round(Math.Clamp(v, 0, 255) / 255 * (bands - 1)) / (bands - 1) * 255;
-                    rgba[i + c] = (byte)v;
-                }
+                r = grey + (r - grey) * 1.1f;
+                g = grey + (g - grey) * 1.1f;
+                b = grey + (b - grey) * 1.1f;
+                float v = MathF.Max(r, MathF.Max(g, b));
+                if (v <= 0)
+                    continue;
+                float flat = MathF.Max(MathF.Round(Math.Clamp(v, 0, 255) / 255 * (bands - 1)), 0.5f) / (bands - 1) * 255;
+                float k = flat / v;
+                rgba[i] = (byte)Math.Clamp(r * k, 0, 255);
+                rgba[i + 1] = (byte)Math.Clamp(g * k, 0, 255);
+                rgba[i + 2] = (byte)Math.Clamp(b * k, 0, 255);
             }
         }
     }
