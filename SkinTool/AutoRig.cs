@@ -189,7 +189,7 @@ namespace SkinTool
         /// how low the fighter itself goes in each pose; <paramref name="usable"/> are the bones the
         /// fighter's own skin follows.
         /// </summary>
-        public void FloorGuard(Skeleton skeleton, List<Preview.Pose> poses, List<float> lowest, HashSet<int> usable)
+        public void FloorGuard(FighterMesh fighter, Skeleton skeleton, List<Preview.Pose> poses, List<float> lowest, HashSet<int> usable)
         {
             int n = Positions.Length;
             float tall = Positions.Max(p => p.Y) - Positions.Min(p => p.Y);
@@ -204,7 +204,7 @@ namespace SkinTool
                 return ys;
             }
             // how far a point goes below what's allowed, over all the poses, with bone `from` handing `share` to `to`
-            float Depth(int i, int from = -1, int to = -1, float share = 0)
+            float Depth(int i, int from = -1, int to = -1, float share = 0, float slack = 0)
             {
                 float sum = 0;
                 for (int p = 0; p < skins.Length; p++)
@@ -212,7 +212,7 @@ namespace SkinTool
                     float y = 0;
                     foreach (var e in Weights[i])
                         y += e.Bone == from ? e.Weight * ((1 - share) * Y(i, from)[p] + share * Y(i, to)[p]) : e.Weight * Y(i, e.Bone)[p];
-                    sum += MathF.Max(0, allowed[p] - y);
+                    sum += MathF.Max(0, allowed[p] - slack - y);
                 }
                 return sum;
             }
@@ -220,7 +220,7 @@ namespace SkinTool
             var done = new HashSet<int>();
             // never all of it: the part still moves with its own bone some
             var steps = new[] { 0.15f, 0.3f, 0.45f, 0.6f };
-            for (int round = 0; round < 4; round++)
+            for (int round = 0; round < 8; round++)
             {
                 var sinking = Enumerable.Range(0, n).Select(i => (i, d: Depth(i))).Where(x => x.d > 0).ToList();
                 if (sinking.Count == 0)
@@ -229,8 +229,7 @@ namespace SkinTool
                 var pull = new Dictionary<int, float>();
                 foreach (var (i, d) in sinking)
                     foreach (var e in Weights[i])
-                        // feet and legs stand on the floor, and kick through it as the fighter's own do
-                        if (!done.Contains(e.Bone) && BoneRegion[e.Bone] != LegLeft && BoneRegion[e.Bone] != LegRight)
+                        if (!done.Contains(e.Bone))
                             pull[e.Bone] = pull.GetValueOrDefault(e.Bone) + d * e.Weight;
                 if (pull.Count == 0)
                     break;
@@ -239,14 +238,43 @@ namespace SkinTool
                 var part = Enumerable.Range(0, n).Where(i => Weights[i].Any(e => e.Bone == bone)).ToList();
                 float before = part.Sum(i => Depth(i));
 
-                (int To, float Share, float After) best = (-1, 0, before);
+                // a leg or tail that reaches out past the fighter's own (a four-legged model's front legs,
+                // a long tail) swings much further than the fighter's does, down through the floor in a
+                // stride or a tail sweep: only the points past it let go, the further out the more, to the
+                // body, or failing that to the joints that carry the whole fighter (they move with it but
+                // don't bend into a crouch or swing in a stride)
+                bool limb = BoneRegion[bone] == LegLeft || BoneRegion[bone] == LegRight || BoneRegion[bone] == Other;
+                Func<int, float> reach = _ => 1;
+                var to = new List<int>();
                 for (int a = skeleton.Parent[bone]; a > 0; a = skeleton.Parent[a])
+                    if (usable.Contains(a) && (!limb || BoneRegion[a] == Body))
+                        to.Add(a);
+                if (limb)
                 {
-                    if (!usable.Contains(a))
+                    var theirs = Enumerable.Range(0, fighter.Vertices.Count).Where(k => FighterRegion[k] == BoneRegion[bone]).Select(k => fighter.Vertices[k].Position).ToList();
+                    if (theirs.Count == 0 || to.Count == 0)
                         continue;
-                    foreach (var share in steps)
+                    var lo = theirs.Aggregate(Vector3.Min) - new Vector3(0.02f * tall);
+                    var hi = theirs.Aggregate(Vector3.Max) + new Vector3(0.02f * tall);
+                    float ramp = 0.1f * tall;
+                    reach = i => Math.Clamp((Vector3.Max(Vector3.Max(lo - Positions[i], Positions[i] - hi), Vector3.Zero)).Length() / ramp, 0, 1);
+                    for (int a = skeleton.Parent[to[0]]; a > 0; a = skeleton.Parent[a])
+                        to.Add(a);
+                    to = to.Distinct().Take(4).ToList();
+                }
+
+                // a limb only lets go when it goes well under (feet a little wider than the fighter's
+                // dipping a bit in a kick is fine, and was before)
+                float slack = limb ? 0.07f * tall : 0;
+                before = part.Sum(i => Depth(i, slack: slack));
+                if (before <= 0)
+                    continue;
+                (int To, float Share, float After) best = (-1, 0, before);
+                foreach (var a in to)
+                {
+                    foreach (var share in limb ? new[] { 0.25f, 0.5f, 0.75f, 1f } : steps)
                     {
-                        float after = part.Sum(i => Depth(i, bone, a, share));
+                        float after = part.Sum(i => Depth(i, bone, a, share * reach(i), slack));
                         if (after < best.After - 1e-3f)
                             best = (a, share, after);
                         if (after <= before * 0.2f)
@@ -260,20 +288,25 @@ namespace SkinTool
                     continue;
                 foreach (var i in part)
                 {
+                    float share = best.Share * reach(i);
+                    if (share <= 0)
+                        continue;
                     var sum = new Dictionary<int, float>();
                     foreach (var e in Weights[i])
                     {
-                        float w = e.Bone == bone ? e.Weight * (1 - best.Share) : e.Weight;
+                        float w = e.Bone == bone ? e.Weight * (1 - share) : e.Weight;
                         sum[e.Bone] = sum.GetValueOrDefault(e.Bone) + w;
                         if (e.Bone == bone)
-                            sum[best.To] = sum.GetValueOrDefault(best.To) + e.Weight * best.Share;
+                            sum[best.To] = sum.GetValueOrDefault(best.To) + e.Weight * share;
                     }
                     // at most three, as everywhere else
                     var top = sum.Where(kv => kv.Value > 1e-4f).OrderByDescending(kv => kv.Value).Take(3).ToList();
                     float total = top.Sum(kv => kv.Value);
                     Weights[i] = top.Select(kv => new SkinBuilder.Influence { Bone = kv.Key, Weight = kv.Value / total }).ToArray();
                 }
-                Report += $"floor: bone {bone} went into the floor in low moves; it now pulls {1 - best.Share:0%} and bone {best.To} the rest\n";
+                Report += limb
+                    ? $"floor: bone {bone} swung parts reaching out past the fighter's own into the floor; those follow bone {best.To} instead ({best.Share:0%} at the far end)\n"
+                    : $"floor: bone {bone} went into the floor in low moves; it now pulls {1 - best.Share:0%} and bone {best.To} the rest\n";
             }
         }
 

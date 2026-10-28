@@ -746,6 +746,15 @@ namespace SkinTool
                     }
             }
 
+            // the floor, drawn over the model so anything that sinks below it shows
+            if (framing == null)
+            {
+                int floor = (int)MathF.Round(center.Y - Vector3.Transform(Vector3.Zero, view).Y * scale);
+                if (floor >= 0 && floor < height)
+                    for (int x = 0; x < width; x++)
+                        img.Set(x, floor, new Vector3(0.9f, 0.35f, 0.3f));
+            }
+
             return img;
         }
 

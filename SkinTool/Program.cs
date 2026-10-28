@@ -624,7 +624,7 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
             {
                 var poses = Animations.Load(fighterDat, animDat, Animations.FloorPoses);
                 var lowest = Preview.FloorDepth(dats[0], fighterData, poses);
-                rig.FloorGuard(skeleton, poses, lowest.Select(l => l.Low).ToList(), fighter.SkinBones.Concat(rig.Weights.SelectMany(w => w.Select(e => e.Bone))).ToHashSet());
+                rig.FloorGuard(fighter, skeleton, poses, lowest.Select(l => l.Low).ToList(), fighter.SkinBones.Concat(rig.Weights.SelectMany(w => w.Select(e => e.Bone))).ToHashSet());
             }
             Console.Write(rig.Report);
             if (overlayPng != null)
