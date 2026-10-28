@@ -60,7 +60,7 @@ namespace SkinTool
 
         /// <summary>
         /// Slots the game hides unless something switches them on: the far-away model, and every choice
-        /// but the first of each switchable group (a sheathed sword, Peach's pan and racket).
+        /// but the first of each switchable group (a sheathed sword, Peach's pan and racket, Yoshi's egg).
         /// </summary>
         public static HashSet<int> HiddenByDefault(SBM_FighterData data)
         {
@@ -74,7 +74,7 @@ namespace SkinTool
                 {
                     var choices = groups[g].LookupEntries?.Array ?? Array.Empty<SBM_LookupEntry>();
                     for (int c = 0; c < choices.Length; c++)
-                        (g == 0 || c == 0 ? shown : hidden).UnionWith(choices[c].Entries.Select(b => (int)b));
+                        (c == 0 ? shown : hidden).UnionWith(choices[c].Entries.Select(b => (int)b));
                 }
             }
             hidden.ExceptWith(shown);

@@ -71,7 +71,7 @@ namespace SkinTool
             public List<GX_Vertex> Vertices = new(); // a triangle list, relative to Joint
             public GXAttribName[] Attrs;
             public POBJ_FLAG Cull;
-            // a kept mesh that bends with several bones (Samus curling up) goes back in whole
+            // the costume's own mesh (a weapon nobody replaced, Yoshi's egg) goes back in whole
             public HSD_DOBJ Original;
         }
 
@@ -132,24 +132,8 @@ namespace SkinTool
             return parts;
         }
 
-        /// <summary>The costume's own weapon mesh, unchanged but bound to its bone so it can sit with the rest.</summary>
-        static Part Keep(int slot, HSD_DOBJ dobj, int joint)
-        {
-            var pobj = dobj.Pobj;
-            if (pobj.List.Any(p => p.Flags.HasFlag(POBJ_FLAG.ENVELOPE)))
-                return new Part { Slot = slot, Joint = joint, Original = dobj };
-            var attrs = pobj.ToGXAttributes().Select(a => a.AttributeName)
-                .Where(a => a != GXAttribName.GX_VA_NULL && a != GXAttribName.GX_VA_PNMTXIDX);
-            return new Part
-            {
-                Slot = slot,
-                Joint = joint,
-                Mobj = dobj.Mobj,
-                Vertices = dobj.Pobj.List.SelectMany(Triangles).ToList(),
-                Attrs = new[] { GXAttribName.GX_VA_PNMTXIDX }.Concat(attrs).ToArray(),
-                Cull = pobj.Flags & (POBJ_FLAG.CULLFRONT | POBJ_FLAG.CULLBACK),
-            };
-        }
+        /// <summary>The costume's own weapon mesh, which goes back unchanged in its own slot.</summary>
+        static Part Keep(int slot, HSD_DOBJ dobj, int joint) => new Part { Slot = slot, Joint = joint, Original = dobj };
 
         /// <summary>
         /// Places an uploaded weapon where the original sits: its longest side along the original's longest
