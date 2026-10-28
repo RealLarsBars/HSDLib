@@ -35,6 +35,8 @@ namespace SkinTool
         // weapon slots: the body never goes in them, and these parts (the costume's own weapon or an
         // uploaded one) fill them
         public HashSet<int> WeaponSlots = new();
+        // the Animelee look: the model's materials drawn without lighting, its colours flattened
+        public bool Flat;
         public List<Weapons.Part> WeaponParts = new();
 
         public SkinBuilder(HSDRawFile file, Skeleton skeleton)
@@ -130,7 +132,7 @@ namespace SkinTool
                 var attrs = new[] { GXAttribName.GX_VA_PNMTXIDX, GXAttribName.GX_VA_POS, GXAttribName.GX_VA_NRM, GXAttribName.GX_VA_TEX0 };
                 var dobj = new HSD_DOBJ()
                 {
-                    Mobj = CreateMaterial(group.Key.Texture, textures),
+                    Mobj = CreateMaterial(group.Key.Texture, textures, Flat),
                     Pobj = generator.CreatePOBJsFromTriangleList(vertices, attrs, bones, boneWeights),
                 };
                 // drawn from both sides, like Fox's scarf: where the body bends hard (a round body
@@ -155,7 +157,7 @@ namespace SkinTool
                 var joint = skeleton.Joints[part.Joint];
                 var dobj = new HSD_DOBJ()
                 {
-                    Mobj = part.Mobj ?? CreateMaterial(part.Texture, textures),
+                    Mobj = part.Mobj ?? CreateMaterial(part.Texture, textures, false),
                     // one bone at full weight: stored relative to it, as the original rigid mesh was
                     Pobj = generator.CreatePOBJsFromTriangleList(part.Vertices, part.Attrs,
                         part.Vertices.Select(_ => new[] { joint }).ToList(), part.Vertices.Select(_ => new[] { 1f }).ToList()),
@@ -223,11 +225,12 @@ namespace SkinTool
             return slots;
         }
 
-        private static HSD_MOBJ CreateMaterial(string texturePath, Dictionary<string, HSD_TOBJ> cache)
+        private static HSD_MOBJ CreateMaterial(string texturePath, Dictionary<string, HSD_TOBJ> cache, bool flat)
         {
             var mobj = new HSD_MOBJ()
             {
-                RenderFlags = RENDER_MODE.DIFFUSE,
+                // flat: drawn as it is, without the stage's lighting (the Animelee style)
+                RenderFlags = flat ? RENDER_MODE.CONSTANT : RENDER_MODE.DIFFUSE,
                 Material = new HSD_Material()
                 {
                     AMB_A = 0xFF,
@@ -246,7 +249,7 @@ namespace SkinTool
 
             if (!cache.TryGetValue(texturePath, out var tobj))
             {
-                tobj = LoadTexture(texturePath);
+                tobj = LoadTexture(texturePath, flat);
                 cache[texturePath] = tobj;
             }
             else
@@ -263,7 +266,7 @@ namespace SkinTool
             return mobj;
         }
 
-        private static HSD_TOBJ LoadTexture(string path)
+        private static HSD_TOBJ LoadTexture(string path, bool flat)
         {
             ImageResult image;
             using (var stream = File.OpenRead(path))
@@ -272,6 +275,8 @@ namespace SkinTool
             // GX repeat wrapping needs power of two sizes, and the hardware tops out at 1024
             int w = PowerOfTwo(image.Width), h = PowerOfTwo(image.Height);
             var rgba = Resize(image.Data, image.Width, image.Height, w, h);
+            if (flat)
+                Animelee.Flatten(rgba);
 
             var bgra = new byte[w * h * 4];
             for (int i = 0; i < bgra.Length; i += 4)

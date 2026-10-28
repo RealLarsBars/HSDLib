@@ -38,6 +38,8 @@ namespace SkinTool
             public bool TwoSided;
             // culls its front instead of its back (an outline shell)
             public bool CullFront;
+            // a constant material: the game draws it without lighting (the Animelee style)
+            public bool Unlit;
         }
 
         // joint index -> extra rotation in degrees (x, y, z), per pose
@@ -523,6 +525,7 @@ namespace SkinTool
                         }
                     }
 
+                    int drawn = tris.Count;
                     foreach (var pobj in dobj.Pobj.List)
                     {
                         var dl = pobj.ToDisplayList();
@@ -581,6 +584,9 @@ namespace SkinTool
                             }
                         }
                     }
+                    if ((dobj.Mobj?.RenderFlags & RENDER_MODE.CONSTANT) != 0)
+                        for (int i = drawn; i < tris.Count; i++)
+                            tris[i].Unlit = true;
                 }
             }
 
@@ -670,7 +676,7 @@ namespace SkinTool
                 var nrm = Vector3.Cross(b - a, c - a);
                 if (nrm.LengthSquared() < 1e-12f) continue;
                 nrm = Vector3.Normalize(nrm);
-                float shade = framing?.Flat == true
+                float shade = t.Unlit ? 1 : framing?.Flat == true
                     ? 0.8f + 0.2f * MathF.Round(Math.Abs(Vector3.Dot(nrm, light)) * 2) / 2
                     : 0.35f + 0.65f * Math.Abs(Vector3.Dot(nrm, light));
 

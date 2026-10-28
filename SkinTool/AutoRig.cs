@@ -22,6 +22,13 @@ namespace SkinTool
             // first (a model lying down or upside down): X leans it forward, Z sideways
             public float RotateY = 0, RotateX = 0, RotateZ = 0;
 
+            // moves the fitted model forward (towards where the fighter faces) and up, as shares of the
+            // fighter's height, after it is weighted: it only changes where it sits on the fighter
+            public float Forward = 0, Up = 0;
+
+            // the look: normal, or animelee (black outline, flat lighting, flat colours)
+            public string Style = "normal";
+
             // fighter vertices blended per model vertex
             public int Neighbours = 8;
 
@@ -148,7 +155,28 @@ namespace SkinTool
             rig.Transfer(model, fighter, opt);
             if (rig.LegsPressed)
                 rig.Report += $"left out {rig.UnjoinLegs(model)} triangles joining the two lower legs, which would stretch into a sheet in a stride\n";
+            rig.Move(fighter, opt);
             return rig;
+        }
+
+        /// <summary>
+        /// Slides the weighted model to where the user wants it on the fighter (a model with a long neck
+        /// and tail, like Spyro, can sit too far forward). Each part keeps its bones; it never goes up off
+        /// the floor, so a skin can't float.
+        /// </summary>
+        private void Move(FighterMesh fighter, Options opt)
+        {
+            if (opt.Forward == 0 && opt.Up == 0)
+                return;
+            float tall = fighter.Max.Y - fighter.Min.Y;
+            float floor = Positions.Min(p => p.Y);
+            float up = MathF.Min(opt.Up * tall, MathF.Max(fighter.Min.Y - floor, 0));
+            var by = new Vector3(0, up, opt.Forward * tall);
+            for (int i = 0; i < Positions.Length; i++)
+                Positions[i] += by;
+            NeckY += up;
+            Report += $"moved {opt.Forward:+0%;-0%;0%} forward and {up / tall:+0%;-0%;0%} up\n"
+                + (opt.Up * tall > up + 1e-4f ? "  (no higher: it would float off the floor)\n" : "");
         }
 
         /// <summary>
