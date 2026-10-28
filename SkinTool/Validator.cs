@@ -95,7 +95,9 @@ namespace SkinTool
                         var envs = p.EnvelopeWeights;
                         if (envs == null)
                         {
-                            problems.Add("a mesh has vertices without weights");
+                            // a mesh on its own joint is drawn with that joint, as the game's own rigid meshes are
+                            if (j == joints[0])
+                                problems.Add("a mesh has vertices without weights");
                             continue;
                         }
                         if (envs.Length > 10)

@@ -54,6 +54,10 @@ namespace SkinTool
         public void Replace(ObjModel model, Vector3[] positions, Vector3[] normals, Influence[][] weights)
         {
             int slotCount = root.TreeList.Sum(j => j.Dobj?.List.Count ?? 0);
+            // the joint each slot hangs from. Slots stay on their own joints: the game ties a joint's
+            // material animations (Yoshi's eyes on his head joints, his egg's fade) to the meshes on that
+            // joint, and moving them all to the root crashed Yoshi on loading
+            var owner = root.TreeList.SelectMany(j => Enumerable.Repeat(j, j.Dobj?.List.Count ?? 0)).ToArray();
             var animated = AnimatedSlots();
 
             // Some fighters' meshes have two textures or none, and the game expects each slot to keep
@@ -68,7 +72,10 @@ namespace SkinTool
                 .OrderByDescending(g => g.Count())
                 .ToList();
 
-            var shown = Slots.Preferred(FighterData, slotCount).Where(i => !animated.Contains(i) && !WeaponSlots.Contains(i)).ToList();
+            // the model blends between bones, which only meshes on the root do (the game's own never
+            // blend anywhere else), so root slots come first
+            var shown = Slots.Preferred(FighterData, slotCount).Where(i => !animated.Contains(i) && !WeaponSlots.Contains(i))
+                .OrderBy(i => owner[i] == root ? 0 : 1).ToList();
             var freeSlots = shown.Where(i => textureCounts[i] == 1).ToList();
             if (groups.Count > freeSlots.Count && shown.Count >= groups.Count)
             {
@@ -155,17 +162,37 @@ namespace SkinTool
             foreach (var part in WeaponParts.Where(p => p.Original == null))
             {
                 var joint = skeleton.Joints[part.Joint];
+                HSD_POBJ pobjs;
+                if (owner[part.Slot] == root)
+                    // one bone at full weight: stored relative to it, as the original rigid mesh was
+                    pobjs = generator.CreatePOBJsFromTriangleList(part.Vertices, part.Attrs,
+                        part.Vertices.Select(_ => new[] { joint }).ToList(), part.Vertices.Select(_ => new[] { 1f }).ToList());
+                else
+                {
+                    // a slot on its own joint is drawn with that joint, like the game's own rigid meshes
+                    int own = skeleton.IndexOf(owner[part.Slot]);
+                    Matrix4x4.Invert(skeleton.World[own], out var toOwn);
+                    var move = skeleton.World[part.Joint] * toOwn;
+                    var vertices = part.Vertices.Select(v =>
+                    {
+                        var p = Vector3.Transform(new Vector3(v.POS.X, v.POS.Y, v.POS.Z), move);
+                        var n = Vector3.Normalize(Vector3.TransformNormal(new Vector3(v.NRM.X, v.NRM.Y, v.NRM.Z), move));
+                        v.POS = new GXVector3(p.X, p.Y, p.Z);
+                        v.NRM = new GXVector3(n.X, n.Y, n.Z);
+                        return v;
+                    }).ToList();
+                    pobjs = generator.CreatePOBJsFromTriangleList(vertices, part.Attrs.Where(a => a != GXAttribName.GX_VA_PNMTXIDX).ToArray(), null, null);
+                }
                 var dobj = new HSD_DOBJ()
                 {
                     Mobj = part.Mobj ?? CreateMaterial(part.Texture, textures, false),
-                    // one bone at full weight: stored relative to it, as the original rigid mesh was
-                    Pobj = generator.CreatePOBJsFromTriangleList(part.Vertices, part.Attrs,
-                        part.Vertices.Select(_ => new[] { joint }).ToList(), part.Vertices.Select(_ => new[] { 1f }).ToList()),
+                    Pobj = pobjs,
                 };
                 for (var pobj = dobj.Pobj; pobj != null; pobj = pobj.Next)
                     pobj.Flags = (pobj.Flags & ~(POBJ_FLAG.CULLFRONT | POBJ_FLAG.CULLBACK)) | part.Cull;
                 weapons[part.Slot] = dobj;
-                enveloped.Add(part.Joint);
+                if (owner[part.Slot] == root)
+                    enveloped.Add(part.Joint);
             }
 
             generator.SaveChanges();
@@ -182,9 +209,14 @@ namespace SkinTool
 
             foreach (var j in root.TreeList)
                 j.Dobj = null;
-            for (int i = 1; i < slots.Length; i++)
-                slots[i - 1].Next = slots[i];
-            root.Dobj = slots[0];
+            for (int i = 0; i < slots.Length; i++)
+            {
+                slots[i].Next = null;
+                if (owner[i].Dobj == null)
+                    owner[i].Dobj = slots[i];
+                else
+                    slots[i - 1].Next = slots[i];
+            }
 
             // every bone a vertex blends with needs a bind matrix; existing ones are left alone
             foreach (var b in enveloped)
