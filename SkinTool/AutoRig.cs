@@ -179,6 +179,9 @@ namespace SkinTool
                 + (opt.Up * tall > up + 1e-4f ? "  (no higher: it would float off the floor)\n" : "");
         }
 
+        // a blended point counts as flat under half its depth
+        const float KeepDepth = 0.5f;
+
         /// <summary>
         /// Keeps the skin out of the floor in the fighter's low moves (a crouch, a landing, a low kick).
         /// A model shaped differently from the fighter can hang below the bones it follows: Spyro's snout
@@ -187,14 +190,42 @@ namespace SkinTool
         /// than a little) hands part of its pull to a bone further up its chain, the least that keeps the
         /// part out. The whole part changes alike, so the surface can't tear. <paramref name="lowest"/> is
         /// how low the fighter itself goes in each pose; <paramref name="usable"/> are the bones the
-        /// fighter's own skin follows.
+        /// fighter's own skin follows. A part never takes a share that squashes it in any of <paramref name="moves"/>
+        /// (all the fighter's moves): a point blended between two bones that turn very differently, like a
+        /// head and the hips, loses its depth and goes paper thin, which is worse than dipping into the floor.
         /// </summary>
-        public void FloorGuard(FighterMesh fighter, Skeleton skeleton, List<Preview.Pose> poses, List<float> lowest, HashSet<int> usable)
+        public void FloorGuard(FighterMesh fighter, Skeleton skeleton, List<Preview.Pose> poses, List<float> lowest, HashSet<int> usable, List<Preview.Pose> moves)
         {
             int n = Positions.Length;
             float tall = Positions.Max(p => p.Y) - Positions.Min(p => p.Y);
             var allowed = lowest.Select(l => MathF.Min(l, 0) - 0.03f * tall).ToArray();
             var skins = poses.Select(p => Preview.PosedSkinning(skeleton, p)).ToArray();
+            var all = moves.Select(p => Preview.PosedSkinning(skeleton, p)).ToArray();
+            // a point's weights with bone `from` handing `share` to `to` (at most three, as everywhere else)
+            SkinBuilder.Influence[] Handed(int i, int from, int to, float share)
+            {
+                if (share <= 0 || !Weights[i].Any(e => e.Bone == from))
+                    return Weights[i];
+                var sum = new Dictionary<int, float>();
+                foreach (var e in Weights[i])
+                {
+                    sum[e.Bone] = sum.GetValueOrDefault(e.Bone) + (e.Bone == from ? e.Weight * (1 - share) : e.Weight);
+                    if (e.Bone == from)
+                        sum[to] = sum.GetValueOrDefault(to) + e.Weight * share;
+                }
+                var top = sum.Where(kv => kv.Value > 1e-4f).OrderByDescending(kv => kv.Value).Take(3).ToList();
+                float total = top.Sum(kv => kv.Value);
+                return top.Select(kv => new SkinBuilder.Influence { Bone = kv.Key, Weight = kv.Value / total }).ToArray();
+            }
+            // in how many of the moves a point goes flat
+            int Flat(SkinBuilder.Influence[] w)
+            {
+                if (w.Length < 2)
+                    return 0;
+                var bones = w.Select(e => e.Bone).ToArray();
+                var weights = w.Select(e => e.Weight).ToArray();
+                return all.Count(m => Preview.Kept(bones, weights, m) < KeepDepth);
+            }
             // each point's place in each pose under each bone, worked out once
             var at = new Dictionary<(int, int), float[]>();
             float[] Y(int i, int bone)
@@ -219,7 +250,7 @@ namespace SkinTool
 
             var done = new HashSet<int>();
             // never all of it: the part still moves with its own bone some
-            var steps = new[] { 0.15f, 0.3f, 0.45f, 0.6f };
+            var steps = new[] { 0.15f, 0.3f, 0.45f, 0.6f, 0.8f, 1f };
             for (int round = 0; round < 8; round++)
             {
                 var sinking = Enumerable.Range(0, n).Select(i => (i, d: Depth(i))).Where(x => x.d > 0).ToList();
@@ -270,42 +301,36 @@ namespace SkinTool
                 if (before <= 0)
                     continue;
                 (int To, float Share, float After) best = (-1, 0, before);
+                int flatBefore = part.Sum(i => Flat(Weights[i]));
                 foreach (var a in to)
                 {
                     foreach (var share in limb ? new[] { 0.25f, 0.5f, 0.75f, 1f } : steps)
                     {
+                        // never at the cost of flattening the part (a few more flat moments among
+                        // hundreds of moves don't show). A limb's far end may flatten some in tumbles
+                        // and rolls, where the limb turns right round against the joints it lets go
+                        // to: that's quick and small, a head going flat in a landing isn't
+                        if (part.Sum(i => Flat(Handed(i, bone, a, share * reach(i)))) > flatBefore + (limb ? 0.08f : 0.002f) * part.Count * all.Length)
+                            continue;
                         float after = part.Sum(i => Depth(i, bone, a, share * reach(i), slack));
                         if (after < best.After - 1e-3f)
                             best = (a, share, after);
                         if (after <= before * 0.2f)
                             break;
                     }
-                    if (best.After <= before * 0.2f)
+                    // the nearest bone that gets it well out: it moves most like the part's own
+                    if (best.After <= before * 0.5f)
                         break;
                 }
                 // only worth it when it gets the part well out
                 if (best.To < 0 || best.After > before * 0.5f)
                     continue;
                 foreach (var i in part)
-                {
-                    float share = best.Share * reach(i);
-                    if (share <= 0)
-                        continue;
-                    var sum = new Dictionary<int, float>();
-                    foreach (var e in Weights[i])
-                    {
-                        float w = e.Bone == bone ? e.Weight * (1 - share) : e.Weight;
-                        sum[e.Bone] = sum.GetValueOrDefault(e.Bone) + w;
-                        if (e.Bone == bone)
-                            sum[best.To] = sum.GetValueOrDefault(best.To) + e.Weight * share;
-                    }
-                    // at most three, as everywhere else
-                    var top = sum.Where(kv => kv.Value > 1e-4f).OrderByDescending(kv => kv.Value).Take(3).ToList();
-                    float total = top.Sum(kv => kv.Value);
-                    Weights[i] = top.Select(kv => new SkinBuilder.Influence { Bone = kv.Key, Weight = kv.Value / total }).ToArray();
-                }
+                    Weights[i] = Handed(i, bone, best.To, best.Share * reach(i));
                 Report += limb
                     ? $"floor: bone {bone} swung parts reaching out past the fighter's own into the floor; those follow bone {best.To} instead ({best.Share:0%} at the far end)\n"
+                    : best.Share >= 1
+                    ? $"floor: bone {bone} went into the floor in low moves; its part now follows bone {best.To} alone (a blend of the two would squash it flat)\n"
                     : $"floor: bone {bone} went into the floor in low moves; it now pulls {1 - best.Share:0%} and bone {best.To} the rest\n";
             }
         }

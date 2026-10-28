@@ -338,6 +338,62 @@ namespace SkinTool
         }
 
         /// <summary>
+        /// How much of the skin gets squashed flat in some pose: a point blended between bones that turn
+        /// very differently (a head following the hips as well) loses its depth, and the part goes paper
+        /// thin. A point counts when its blended turn keeps less than <see cref="ThinLimit"/> of the volume
+        /// the bones it follows keep on their own. Returns the share of points, the worst pose and bone.
+        /// </summary>
+        public static (float Share, string Pose, int Bone) ThinCheck(string dat, HSDRaw.Melee.Pl.SBM_FighterData fighter, List<Pose> poses)
+        {
+            var file = new HSDRawFile(dat);
+            var sk = new Skeleton((HSD_JOBJ)file.Roots[0].Data);
+            var hidden = fighter != null ? Slots.HiddenByDefault(fighter) : new HashSet<int>();
+            var weaponSlots = fighter != null ? Weapons.AllSlots(fighter, BoneMaps.Code(dat)) : new HashSet<int>();
+            var verts = Decode(sk).Where(t => !hidden.Contains(t.Slot) && !weaponSlots.Contains(t.Slot)).SelectMany(t => new[] { t.A, t.B, t.C }).Distinct().ToList();
+            var thin = new HashSet<Vert>();
+            var byPose = new Dictionary<string, int>();
+            foreach (var pose in poses)
+            {
+                var skin = PosedSkinning(sk, pose);
+                foreach (var v in verts)
+                {
+                    float kept = Kept(v.Bones, v.Weights, skin);
+                    if (kept < ThinLimit)
+                    {
+                        thin.Add(v);
+                        byPose[pose.Name] = byPose.GetValueOrDefault(pose.Name) + 1;
+                    }
+                }
+            }
+            if (thin.Count == 0)
+                return (0, null, -1);
+            int bone = thin.GroupBy(v => v.Bones[Array.IndexOf(v.Weights, v.Weights.Max())]).OrderByDescending(g => g.Count()).First().Key;
+            return (thin.Count / (float)verts.Count, byPose.OrderByDescending(kv => kv.Value).First().Key, bone);
+        }
+
+        /// <summary>
+        /// The share of its volume a point keeps under a blend of bones (1 = as solid as the bones
+        /// themselves, 0 = flat).
+        /// </summary>
+        public static float Kept(IList<int> bones, IList<float> weights, Matrix4x4[] skin)
+        {
+            Matrix4x4 m = default;
+            float alone = 0;
+            for (int i = 0; i < bones.Count; i++)
+            {
+                m += skin[bones[i]] * weights[i];
+                alone += MathF.Abs(Det3(skin[bones[i]])) * weights[i];
+            }
+            return alone > 1e-6f ? Det3(m) / alone : 1;
+        }
+
+        static float Det3(Matrix4x4 m) =>
+            m.M11 * (m.M22 * m.M33 - m.M23 * m.M32) - m.M12 * (m.M21 * m.M33 - m.M23 * m.M31) + m.M13 * (m.M21 * m.M32 - m.M22 * m.M31);
+
+        // under a third of the volume reads as flat in game
+        public const float ThinLimit = 0.35f;
+
+        /// <summary>
         /// How far below the floor (y = 0) the costume's lowest point goes in each pose, and the bone
         /// most of the lowest points follow, for comparing a skin with the costume it came from.
         /// </summary>
