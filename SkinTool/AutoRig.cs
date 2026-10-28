@@ -133,6 +133,7 @@ namespace SkinTool
         private float HipY = float.NaN, FloorY, MiddleX, HalfWidth, MiddleZ, HalfDepth;
 
         private int[] BoneRegion;
+        private Skeleton Skel;
         private int[] FighterRegion;
         public int[] ModelRegion;
 
@@ -150,6 +151,7 @@ namespace SkinTool
             else
                 rig.Report += $"detail bones folded into their parents: {string.Join(",", merged)}\n";
             rig.HeadBone = head;
+            rig.Skel = skeleton;
             rig.FighterRegions(fighter, skeleton, head, opt.Roles);
             rig.Fit(model, fighter, skeleton, opt);
             rig.Transfer(model, fighter, opt);
@@ -251,7 +253,7 @@ namespace SkinTool
             var done = new HashSet<int>();
             // never all of it: the part still moves with its own bone some
             var steps = new[] { 0.15f, 0.3f, 0.45f, 0.6f, 0.8f, 1f };
-            for (int round = 0; round < 8; round++)
+            for (int round = 0; round < 16; round++)
             {
                 var sinking = Enumerable.Range(0, n).Select(i => (i, d: Depth(i))).Where(x => x.d > 0).ToList();
                 if (sinking.Count == 0)
@@ -274,7 +276,7 @@ namespace SkinTool
                 // stride or a tail sweep: only the points past it let go, the further out the more, to the
                 // body, or failing that to the joints that carry the whole fighter (they move with it but
                 // don't bend into a crouch or swing in a stride)
-                bool limb = BoneRegion[bone] == LegLeft || BoneRegion[bone] == LegRight || BoneRegion[bone] == Other;
+                bool limb = BoneRegion[bone] != Body;
                 Func<int, float> reach = _ => 1;
                 var to = new List<int>();
                 for (int a = skeleton.Parent[bone]; a > 0; a = skeleton.Parent[a])
@@ -296,7 +298,7 @@ namespace SkinTool
 
                 // a limb only lets go when it goes well under (feet a little wider than the fighter's
                 // dipping a bit in a kick is fine, and was before)
-                float slack = limb ? 0.07f * tall : 0;
+                float slack = (limb ? 0.07f : 0.05f) * tall;
                 before = part.Sum(i => Depth(i, slack: slack));
                 if (before <= 0)
                     continue;
@@ -310,7 +312,7 @@ namespace SkinTool
                         // hundreds of moves don't show). A limb's far end may flatten some in tumbles
                         // and rolls, where the limb turns right round against the joints it lets go
                         // to: that's quick and small, a head going flat in a landing isn't
-                        if (part.Sum(i => Flat(Handed(i, bone, a, share * reach(i)))) > flatBefore + (limb ? 0.08f : 0.002f) * part.Count * all.Length)
+                        if (part.Sum(i => Flat(Handed(i, bone, a, share * reach(i)))) > flatBefore + (limb ? 0.1f : 0.002f) * part.Count * all.Length)
                             continue;
                         float after = part.Sum(i => Depth(i, bone, a, share * reach(i), slack));
                         if (after < best.After - 1e-3f)
@@ -659,6 +661,74 @@ namespace SkinTool
                     l.Z = a.fz + (q.Z - a.z) * k;
                 }
                 Lookup[i] = l;
+            }
+
+            // Four legs: a model on all fours stood up (Spyro sitting like a dog) has its front paws on the
+            // floor in front of its hind ones. Those front legs work as the fighter's arms, as they would
+            // on a hand-made skin: they follow shoulder, elbow and hand from the top of the leg down to the
+            // paw, so they reach out in the fighter's attacks instead of dragging along with its strides.
+            if (legSide == null && !float.IsNaN(HipY) && opt.Arms != "body" && opt.Roles != null
+                && new[] { "lsh", "lel", "lha", "rsh", "rel", "rha" }.All(opt.Roles.ContainsKey)
+                && FighterRegion.Contains(ArmLeft) && FighterRegion.Contains(ArmRight))
+            {
+                var paws = Enumerable.Range(0, pts.Length).Where(i => (pts[i].Y - min.Y) / size.Y < 0.06f).Select(i => pts[i].Z).OrderBy(z => z).ToList();
+                // the widest gap between the paws on the floor, front to back
+                float gap = 0, split = float.NaN;
+                for (int k = 1; k < paws.Count; k++)
+                    if (paws[k] - paws[k - 1] > gap) { gap = paws[k] - paws[k - 1]; split = (paws[k] + paws[k - 1]) / 2; }
+                int front = paws.Count(z => z > split), back = paws.Count - front;
+                // a real gap (a good part of the body's depth), with feet on both sides of it
+                float depth = paws.Count > 0 ? paws[^1] - paws[0] : 0;
+                if (gap > 0.15f * depth && front >= 4 && back >= 4)
+                {
+                    // the front legs: in front of the gap, up to where they join the chest
+                    float frontTop = Math.Min(modelCrotch * 1.3f, 0.45f);
+                    var legs = Enumerable.Range(0, pts.Length).Where(i => pts[i].Z > split && (pts[i].Y - min.Y) / size.Y < frontTop).ToList();
+                    foreach (bool left in new[] { true, false })
+                    {
+                        var leg = legs.Where(i => pts[i].X >= cx == left).ToList();
+                        if (leg.Count == 0)
+                            continue;
+                        string side = left ? "l" : "r";
+                        var chain = new[] { "sh", "el", "ha" }.Select(r => skeleton.Position(opt.Roles[side + r])).ToList();
+                        // past the wrist, half the forearm again, for the paw
+                        chain.Add(chain[2] + (chain[2] - chain[1]) * 0.5f);
+                        var lengths = Enumerable.Range(1, chain.Count - 1).Select(k => Vector3.Distance(chain[k - 1], chain[k])).ToArray();
+                        float total = lengths.Sum();
+                        Vector3 Along(float u)
+                        {
+                            float d = u * total;
+                            for (int k = 0; k < lengths.Length; k++)
+                            {
+                                if (d <= lengths[k] || k == lengths.Length - 1)
+                                    return Vector3.Lerp(chain[k], chain[k + 1], Math.Clamp(d / MathF.Max(lengths[k], 1e-4f), 0, 1));
+                                d -= lengths[k];
+                            }
+                            return chain[^1];
+                        }
+                        // the leg's own middle line, from its top down to the paw
+                        float legHigh = leg.Max(i => Positions[i].Y), legLow = leg.Min(i => Positions[i].Y);
+                        float U(int i) => Math.Clamp((legHigh - Positions[i].Y) / MathF.Max(legHigh - legLow, 1e-4f), 0, 1);
+                        Vector3 Middle(float u)
+                        {
+                            var near = leg.OrderBy(i => MathF.Abs(U(i) - u)).Take(Math.Max(3, leg.Count / 5)).ToList();
+                            return near.Aggregate(Vector3.Zero, (acc, i) => acc + Positions[i]) / near.Count;
+                        }
+                        foreach (int i in leg)
+                        {
+                            ModelRegion[i] = left ? ArmLeft : ArmRight;
+                            float u = U(i);
+                            // the leg is bent up along the arm, the top staying where it joins the chest, so the
+                            // paws are held in front like hands (and stay out of the floor when the arms swing)
+                            var bent = Along(u) + (Positions[i] - Middle(u)) * 0.8f;
+                            float k = SmoothStep(0, 0.35f, u);
+                            Positions[i] = Vector3.Lerp(Positions[i], bent, k);
+                            Lookup[i] = Vector3.Lerp(Lookup[i], Along(u), k);
+                        }
+                    }
+                    LimbFollow[ArmLeft] = LimbFollow[ArmRight] = 1;
+                    Report += $"four legs: the front legs ({legs.Count} points, up to {frontTop:P0} of the height) are held up as the fighter's arms\n";
+                }
             }
 
             Report += "model regions: " + string.Join(", ", Enumerable.Range(0, RegionNames.Length)
@@ -1039,6 +1109,13 @@ namespace SkinTool
             FindParts(adj, opt, model.Triangles);
 
             // 1. blend the weights of the nearest fighter vertices
+            float tallest = Positions.Max(q => q.Y) - Positions.Min(q => q.Y);
+            int headBone = !float.IsNaN(NeckY) && HeadBone >= 0 ? Remap[HeadBone] : -1;
+            // the bone the head hangs from
+            int bodyBone = -1;
+            for (int a = HeadBone >= 0 ? Skel.Parent[HeadBone] : -1; a >= 0 && bodyBone < 0; a = Skel.Parent[a])
+                if (Remap[a] != headBone) bodyBone = Remap[a];
+            if (bodyBone < 0) headBone = -1;
             var w = new float[n][];
             var fv = fighter.Vertices;
             var pools = Enumerable.Range(0, RegionNames.Length)
@@ -1061,7 +1138,10 @@ namespace SkinTool
                     }
                 }
 
-                // only the region's own bones and the body's (where a limb joins it)
+                // only the region's own bones and the body's (where a limb joins it); below the neck, not
+                // the head's: a model's chest can land on a fighter's big low head (Spyro's on Yoshi's), and
+                // then the whole body bobs and dips with the head
+                bool headless = region == Body && headBone >= 0 && Positions[i].Y < NeckY - tallest * 0.04f;
                 var acc = new float[boneCount];
                 var any = new float[boneCount];
                 foreach (var (d, k) in nearest)
@@ -1071,6 +1151,8 @@ namespace SkinTool
                     {
                         int bone = Remap[fv[k].Bones[b]];
                         any[bone] += fv[k].Weights[b] * iw;
+                        if (headless && bone == headBone)
+                            bone = bodyBone;
                         if (BoneRegion[bone] == region || BoneRegion[bone] == Body)
                             acc[bone] += fv[k].Weights[b] * iw;
                     }
@@ -1152,7 +1234,10 @@ namespace SkinTool
                 ? near.Where(j => !(Leg(i, LegLeft) && Leg(j, LegRight) || Leg(i, LegRight) && Leg(j, LegLeft))).ToHashSet()
                 : near).ToArray();
             Smooth(w, sides, boneCount, opt.SmoothPasses, i => !Foot(i));
-            Smooth(w, adj, boneCount, opt.BodySmoothPasses, i => ModelRegion[i] == Body);
+            // the head is left out: on a model with few points and a big head (Spyro) the head's weights
+            // would otherwise soak down through the whole body, and it all bobs with the head
+            bool belowNeck(int i) => float.IsNaN(NeckY) || HeadBone < 0 || Positions[i].Y < NeckY - tallest * 0.04f;
+            Smooth(w, adj, boneCount, opt.BodySmoothPasses, i => ModelRegion[i] == Body && belowNeck(i));
 
             // 2b. above the neck everything follows the head alone, blending in over a short band
             if (!float.IsNaN(NeckY) && HeadBone >= 0)
@@ -1672,7 +1757,7 @@ namespace SkinTool
                     return role[0] == 'l' ? ArmLeft : ArmRight;
                 if (part is "le" or "kn" or "fb" or "ff")
                     return role[0] == 'l' ? LegLeft : LegRight;
-                return role is "face" or "body" or "butt" or "chest" ? Body : Other;
+                return role is "face" or "body" or "butt" or "chest" or "hips" ? Body : Other;
             }
 
             var byBone = new Dictionary<int, int>();

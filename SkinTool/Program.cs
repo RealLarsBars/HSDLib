@@ -25,6 +25,8 @@ skintool check <original.dat> <skin.dat>
 skintool animelee <skin.dat|skins.zip|folder> --out <out.dat|out.zip|folder>
 skintool preview <out.png> <costume.dat> [<costume.dat> ...] [--anims <Pl**.dat> <Pl**AJ.dat> [--poses AttackAirB@0.25,...]] [--bones]
 skintool bonemap <costume.dat>
+skintool weights <costume.dat> [<Pl**.dat>]
+skintool floor <costume.dat> <Pl**.dat> <Pl**AJ.dat>
 
 build    Swaps the model into every costume given, keeping each costume's skeleton.
          The model is fitted and weighted once, against the first costume.
@@ -63,7 +65,9 @@ inspect  Lists a costume's joints and meshes.
 check    Compares a finished skin with the original costume, as the build does.
 preview  Renders each costume in a few test poses, one row per costume.
          --anims uses the fighter's real animations; --bones colours the model by the bones it follows.
-bonemap  Shows where the fighter's bone map bones sit, to check the map.";
+bonemap  Shows where the fighter's bone map bones sit, to check the map.
+weights  How much of a costume's skin follows each bone (to compare a skin with a hand-made one).
+floor    How far below the floor a costume goes in the fighter's low moves.";
 
         static int Main(string[] args)
         {
@@ -82,6 +86,14 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                     case "preview": return Preview.Run(args);
                     case "slots": return Slots.Dump(args);
                     case "bonemap": return BoneMaps.Dump(args[1]);
+                    case "floor":
+                        foreach (var (pose, low, bone) in Preview.FloorDepth(args[1], Slots.Load(args[2]), Animations.Load(args[2], args[3], Animations.FloorPoses)))
+                            Console.WriteLine(FormattableString.Invariant($"{pose}: {low:0.0} (bone {bone})"));
+                        return 0;
+                    case "weights":
+                        foreach (var kv in Preview.BoneShares(args[1], args.Length > 2 ? Slots.Load(args[2]) : null).OrderBy(kv => kv.Key))
+                            Console.WriteLine(FormattableString.Invariant($"bone {kv.Key}: {kv.Value:P1}"));
+                        return 0;
                     case "check": return Check(args[1], args[2]);
                     case "animelee": return AnimeleeFiles(args);
                     case "models": return Models(args.Skip(1).ToArray());

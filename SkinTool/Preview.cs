@@ -394,6 +394,22 @@ namespace SkinTool
         public const float ThinLimit = 0.35f;
 
         /// <summary>
+        /// How much of a costume's shown skin follows each bone (summed weights per vertex, as a share).
+        /// </summary>
+        public static Dictionary<int, float> BoneShares(string dat, HSDRaw.Melee.Pl.SBM_FighterData fighter)
+        {
+            var file = new HSDRawFile(dat);
+            var sk = new Skeleton((HSD_JOBJ)file.Roots[0].Data);
+            var hidden = fighter != null ? Slots.HiddenByDefault(fighter) : new HashSet<int>();
+            var verts = Decode(sk).Where(t => !hidden.Contains(t.Slot)).SelectMany(t => new[] { t.A, t.B, t.C }).Distinct().ToList();
+            var share = new Dictionary<int, float>();
+            foreach (var v in verts)
+                for (int i = 0; i < v.Bones.Length; i++)
+                    share[v.Bones[i]] = share.GetValueOrDefault(v.Bones[i]) + v.Weights[i] / verts.Count;
+            return share;
+        }
+
+        /// <summary>
         /// How far below the floor (y = 0) the costume's lowest point goes in each pose, and the bone
         /// most of the lowest points follow, for comparing a skin with the costume it came from.
         /// </summary>
