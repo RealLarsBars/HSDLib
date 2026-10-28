@@ -200,7 +200,7 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                     continue;
                 switch (name)
                 {
-                    case "legs": opt.Legs = Rule(name, value, "auto", "separate", "body", "cut"); break;
+                    case "legs": opt.Legs = Rule(name, value, "auto", "separate", "body", "cut", "dress"); break;
                     case "arms": opt.Arms = Rule(name, value, "auto", "fighter", "body"); break;
                     case "scale": opt.Scale = float.Parse(value, CultureInfo.InvariantCulture); break;
                     case "width": opt.Width = Stretch(name, value); break;
@@ -409,7 +409,7 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                     case "--scale": opt.Scale = float.Parse(Next(), CultureInfo.InvariantCulture); break;
                     case "--bones": opt.Bones = Next().Split(',').Select(int.Parse).ToArray(); break;
                     case "--keep-shape": opt.Conform = false; break;
-                    case "--legs": opt.Legs = Rule("legs", Next(), "auto", "separate", "body", "cut"); break;
+                    case "--legs": opt.Legs = Rule("legs", Next(), "auto", "separate", "body", "cut", "dress"); break;
                     case "--arms": opt.Arms = Rule("arms", Next(), "auto", "fighter", "body"); break;
                     case "--neck": opt.Neck = Neck(Next()); break;
                     case "--tail": opt.HasTail = YesNo("--tail", Next()); break;
@@ -606,7 +606,9 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                 opt.Roles = map;
             }
             opt.StretchyFeet = BoneMaps.StretchyFeet.Contains(BoneMaps.Code(dats[0]) ?? "");
-            opt.Dress = BoneMaps.Dress.Contains(BoneMaps.Code(dats[0]) ?? "");
+            opt.Dress = BoneMaps.Dress.Contains(BoneMaps.Code(dats[0]) ?? "") || opt.Legs == "dress";
+            if (opt.Legs == "dress")
+                opt.Legs = "separate";
             if (opt.HasTail)
             {
                 var weighted = BoneMaps.Weighted(firstRoot);

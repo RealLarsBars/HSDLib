@@ -51,7 +51,9 @@ the model and its textures, and an `--out` ending in `.zip` collects the costume
 **Legs.** A model with no real legs (a round body on little feet) is found from its shape. Its body
 works as legs: the bottom 30% (`--leg-band`) bends with the fighter's legs, left half with the left
 leg, fading into the hips towards the top, the middle and the back. It's sized to 75% of the
-fighter's height. Arms far below the fighter's mostly stay with the body. Small openings (the open
+fighter's height. Arms far below the fighter's mostly stay with the body. A slim model whose legs
+show only below a long coat (Linguini) isn't legless: its legs run up to the fighter's hips under the
+coat, as under Zelda's and Peach's dresses. Small openings (the open
 bases of claws and teeth) are closed, and every mesh is drawn from both sides, so bending never
 shows holes.
 
@@ -81,7 +83,8 @@ Peach's items and Ganondorf's sword stay hidden. `portrait <out.png> <costume.da
 line or in a `skin.txt` next to the OBJ (or in the zip):
 
 ```
-legs = body       # auto | separate | body | cut (cut: two legs down the fighter's legs)
+legs = body       # auto | separate | body | cut | dress (cut: two legs down the fighter's legs;
+                  #   dress: the legs run up to the hips under a long coat or dress)
 arms = auto       # auto | fighter (always onto the fighter's arms) | body
 neck = auto       # auto | none | 0.6 (where the head starts, as a share of the height)
 scale = 1.1

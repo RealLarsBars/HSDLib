@@ -273,6 +273,11 @@ namespace SkinTool
                 var part = Enumerable.Range(0, n).Where(i => Weights[i].Any(e => e.Bone == bone)).ToList();
                 float before = part.Sum(i => Depth(i));
 
+                // arms are left alone: a hand brushing the floor is fine, a forearm locked to the shoulder
+                // in every move isn't (Linguini's arms stuck out stiff)
+                if (BoneRegion[bone] is ArmLeft or ArmRight)
+                    continue;
+
                 // a leg or tail that reaches out past the fighter's own (a four-legged model's front legs,
                 // a long tail) swings much further than the fighter's does, down through the floor in a
                 // stride or a tail sweep: only the points past it let go, the further out the more, to the
@@ -375,10 +380,19 @@ namespace SkinTool
                 * Matrix4x4.CreateRotationZ(opt.RotateZ * MathF.PI / 180)
                 * Matrix4x4.CreateRotationY(opt.RotateY * MathF.PI / 180);
             var pts = model.Positions.Select(p => Vector3.Transform(p, rot)).ToArray();
+            // the shape is measured without an outline shell (Animelee's, or one the model came with): a
+            // slightly bigger copy of the model, it closes the gap between the legs and fills in the neck
+            var shapeTris = model.Triangles.Where(t => !t.Outline).ToList();
+            if (shapeTris.Count == 0)
+                shapeTris = model.Triangles;
+            var inShape = new bool[pts.Length];
+            foreach (var t in shapeTris)
+                inShape[t.A.Position] = inShape[t.B.Position] = inShape[t.C.Position] = true;
+            var shape = pts.Where((_, i) => inShape[i]).ToArray();
 
             var min = new Vector3(float.MaxValue);
             var max = new Vector3(float.MinValue);
-            foreach (var p in pts)
+            foreach (var p in shape)
             {
                 min = Vector3.Min(min, p);
                 max = Vector3.Max(max, p);
@@ -412,7 +426,7 @@ namespace SkinTool
             // The legs get their own stretch: the model's crotch lines up with the fighter's, so a
             // model with stubby feet under a round body doesn't drag its belly along with the thighs.
             var stretch = fighterSize / size;
-            var modelTris = model.Triangles.Select(t => (t.A.Position, t.B.Position, t.C.Position));
+            var modelTris = shapeTris.Select(t => (t.A.Position, t.B.Position, t.C.Position));
             var fighterTris = Enumerable.Range(0, fighter.Triangles.Count / 3).Select(t => (3 * t, 3 * t + 1, 3 * t + 2));
             float modelCrotch = Crotch(pts, modelTris, (min.X + max.X) / 2, min.Y, size.Y);
             float fighterCrotch = Crotch(fighter.Vertices.Select(v => v.Position).ToArray(), fighterTris, (fighter.Min.X + fighter.Max.X) / 2, fighter.Min.Y, fighterSize.Y);
@@ -432,7 +446,7 @@ namespace SkinTool
             // make a slim column under the body, where a blob on feet (Monty) is wide right down to them
             if (opt.Legs == "auto" && modelCrotch < fighterCrotch * 0.5f)
             {
-                float together = LegsTogether(pts, (min.X + max.X) / 2, min.Y, size.Y);
+                float together = LegsTogether(shape, (min.X + max.X) / 2, min.Y, size.Y);
                 if (together > 0)
                 {
                     LegsPressed = true;
@@ -440,12 +454,19 @@ namespace SkinTool
                     Report += $"legs pressed together: the model's legs run up to {together:P0} of its height\n";
                 }
             }
-            bool stubby = opt.Legs switch { "separate" => false, "body" or "cut" => true, _ => modelCrotch < fighterCrotch * 0.5f };
+            // a slim model whose legs part well up but still low on its body (Linguini's shins under a long
+            // coat) has real legs under it: they run up to the hips like under a dress, rather than the coat
+            // being read as a body with no legs. A wide one with short legs (BMO's box) isn't
+            bool coat = opt.Legs == "auto" && !opt.Dress && modelCrotch >= 0.15f && modelCrotch < fighterCrotch * 0.5f
+                && Slim(shape, (min.X + max.X) / 2, min.Y, size.Y, modelCrotch);
+            if (coat)
+                Report += "long coat: the model's legs run up under it\n";
+            bool stubby = opt.Legs switch { "separate" => false, "body" or "cut" => true, _ => modelCrotch < fighterCrotch * 0.5f && !coat };
             // a long dress hides where the fighter's legs part (Zelda, Peach): its legs run up to the hip
             // joints under the dress. The model's legs are whatever is below those joints once it stands in
             // the fighter's place, so a pair of shorts bends with the thighs inside it and bare shins with
             // the knees and shins, rather than the shins stretching over the fighter's whole leg
-            if (!stubby && opt.Dress && opt.Roles != null && new[] { "lle", "rle" }.All(opt.Roles.ContainsKey))
+            if (!stubby && (opt.Dress || coat) && opt.Roles != null && new[] { "lle", "rle" }.All(opt.Roles.ContainsKey))
             {
                 float hipHeight = (skeleton.Position(opt.Roles["lle"]).Y + skeleton.Position(opt.Roles["rle"]).Y) / 2 - fighter.Min.Y;
                 if (hipHeight / fighterSize.Y > fighterCrotch)
@@ -503,7 +524,7 @@ namespace SkinTool
             int Slice(float t) => Math.Clamp((int)(t * slices), 0, slices - 1);
             float cx = (min.X + max.X) / 2;
             var reach = new float[slices];
-            foreach (var q in pts)
+            foreach (var q in pts.Where((_, i) => inShape[i]))
             {
                 int s = Slice((q.Y - min.Y) / size.Y);
                 reach[s] = MathF.Max(reach[s], MathF.Abs(q.X - cx));
@@ -544,7 +565,8 @@ namespace SkinTool
                 }
                 // arms here: use the body's outline just below or above them, whichever is narrower,
                 // since the arms' own thickness tapers into the slices next to them
-                var sides = new[] { reach[lo], reach[hi] }.Where(r => r > 0 && r <= typical * 1.35f).ToList();
+                // (not a neck right above arms held out at shoulder height: that would make the chest arms)
+                var sides = new[] { reach[lo], reach[hi] }.Where(r => r > typical * 0.6f && r <= typical * 1.35f).ToList();
                 bodyReach[s] = sides.Count > 0 ? sides.Min() : typical;
             }
 
@@ -628,7 +650,8 @@ namespace SkinTool
                 }
                 float fitted = (a.y - origin.Y) * scale * opt.Height + target.Y;
                 float off = MathF.Abs(fitted - a.fy) / MathF.Max(a.fTip - a.fRoot, 1e-4f);
-                LimbFollow[region] = Math.Clamp(1 - off, 0.2f, 1);
+                // "arms = fighter" means the arms are the fighter's arms, even where the model keeps its shape
+                LimbFollow[region] = opt.Arms == "fighter" ? 1 : Math.Clamp(1 - off, 0.2f, 1);
                 Report += $"{RegionNames[region]}: {fitted:F1} high next to the fighter's {a.fy:F1}, follows the arm bones {LimbFollow[region]:P0}\n";
             }
 
@@ -671,6 +694,26 @@ namespace SkinTool
             Report += $"legs: the model's split at {modelCrotch:P0} of its height lines up with the top of the fighter's legs at {fighterCrotch:P0}\n";
 
             Report += $"fitted size x{scale:F2}: {size.Y * scale * opt.Height:F1} tall next to the fighter's {fighterSize.Y:F1}, {size.X * scale * opt.Width:F1} wide next to its {fighterSize.X:F1}\n";
+        }
+
+        /// <summary>
+        /// Whether the model's body above its crotch is slim for its height: the typical half-width of its
+        /// slices (arms stick out of only a few) under a fifth of its height.
+        /// </summary>
+        private static bool Slim(Vector3[] pts, float cx, float minY, float height, float crotch)
+        {
+            const int slices = 50;
+            var reach = new float[slices];
+            foreach (var q in pts)
+            {
+                float t = (q.Y - minY) / height;
+                if (t < crotch)
+                    continue;
+                int s = Math.Clamp((int)(t * slices), 0, slices - 1);
+                reach[s] = MathF.Max(reach[s], MathF.Abs(q.X - cx));
+            }
+            var used = reach.Where(r => r > 0).OrderBy(r => r).ToList();
+            return used.Count > 0 && used[used.Count / 2] < height * 0.2f;
         }
 
         /// <summary>
@@ -1165,8 +1208,10 @@ namespace SkinTool
                 float h = Positions.Max(q => q.Y) - Positions.Min(q => q.Y);
                 for (int i = 0; i < n; i++)
                 {
+                    // arms held out at the fighter's shoulders can reach above a low neck line (Linguini's):
+                    // they are still arms
                     float k = SmoothStep(NeckY - h * 0.04f, NeckY + h * 0.02f, Positions[i].Y);
-                    if (k <= 0) continue;
+                    if (k <= 0 || ModelRegion[i] == ArmLeft || ModelRegion[i] == ArmRight) continue;
                     for (int b = 0; b < boneCount; b++)
                         w[i][b] *= 1 - k;
                     w[i][head] += k;
