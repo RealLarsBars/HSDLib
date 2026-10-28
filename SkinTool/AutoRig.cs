@@ -52,8 +52,10 @@ namespace SkinTool
             public Dictionary<string, int> Roles;
             // the fighter kicks by stretching its foot bones far out (BoneMaps.StretchyFeet)
             public bool StretchyFeet;
-            // the fighter wears a long dress over its legs (BoneMaps.Dress)
+            // the fighter wears a long dress over its legs (BoneMaps.Dress), or the model is said to
             public bool Dress;
+            // the fighter itself wears a dress, with skirt joints its animations swing (BoneMaps.Dress)
+            public bool OwnDress;
             // pieces of the model that touch keep the same weights where they meet, so they stay attached
             public bool Attach = true;
 
@@ -71,6 +73,10 @@ namespace SkinTool
             // the model's legs: "auto" works it out, "separate" (it has real legs), "body" (its body works
             // as legs) or "cut" (its bottom is cut into two legs down the fighter's)
             public string Legs = "auto";
+
+            // clothes found over the legs (a coat, apron or dress hanging across between them): "outside"
+            // keeps them over the legs as one sheet, "legs" lets them split and follow each leg like trousers
+            public string Clothes = "outside";
 
             // the model's arms: "auto", "fighter" (always moved onto the fighter's arms) or "body"
             // (mostly stay with the body)
@@ -130,6 +136,14 @@ namespace SkinTool
         private float LegTopY = float.NaN;
         // the model's legs are pressed together all the way up (see LegsTogether)
         private bool LegsPressed;
+        // per model position: part of clothes worn over the legs (null: none)
+        public bool[] ClothesOver;
+        // per model position: on the legs under those clothes
+        private bool[] ClothesUnder;
+        // the hips' bone and the two thigh bones (lle, rle), and whether lle is the +x one
+        private (int hip, int left, int right, bool leftPlus) LegJoints = (-1, -1, -1, true);
+        // the fighter's own skirt or dress joints (Peach's, Zelda's), which its animations swing; null: none
+        private HashSet<int> Skirt;
         private float HipY = float.NaN, FloorY, MiddleX, HalfWidth, MiddleZ, HalfDepth;
         // the height of the fighter's shoulder joints (NaN without a bone map)
         private float ShoulderY = float.NaN;
@@ -160,6 +174,13 @@ namespace SkinTool
             if (opt.Roles != null && opt.Roles.TryGetValue("lsh", out int lsh) && opt.Roles.TryGetValue("rsh", out int rsh))
                 rig.ShoulderY = (skeleton.Position(lsh).Y + skeleton.Position(rsh).Y) / 2;
             rig.Fit(model, fighter, skeleton, opt);
+            if (opt.Roles != null && new[] { "lle", "rle" }.All(opt.Roles.ContainsKey))
+            {
+                rig.LegJoints = (opt.Roles.GetValueOrDefault("butt", opt.Roles.GetValueOrDefault("body", -1)), opt.Roles["lle"], opt.Roles["rle"],
+                    skeleton.Position(opt.Roles["lle"]).X > skeleton.Position(opt.Roles["rle"]).X);
+                if (opt.OwnDress)
+                    rig.Skirt = SkirtJoints(fighter, skeleton, rig.Remap, opt.Roles["lle"], opt.Roles["rle"]);
+            }
             rig.Transfer(model, fighter, opt);
             if (rig.LegsPressed)
                 rig.Report += $"left out {rig.UnjoinLegs(model)} triangles joining the two lower legs, which would stretch into a sheet in a stride\n";
@@ -433,6 +454,14 @@ namespace SkinTool
             var modelTris = shapeTris.Select(t => (t.A.Position, t.B.Position, t.C.Position));
             var fighterTris = Enumerable.Range(0, fighter.Triangles.Count / 3).Select(t => (3 * t, 3 * t + 1, 3 * t + 2));
             float modelCrotch = Crotch(pts, modelTris, (min.X + max.X) / 2, min.Y, size.Y);
+            // clothes worn over the legs (a coat, apron or dress hanging across between them)
+            var clothes = Clothes.Find(pts, shapeTris.Select(t => (t.A.Position, t.B.Position, t.C.Position)).ToList(), min, size,
+                tris => Crotch(pts, tris, (min.X + max.X) / 2, min.Y, size.Y));
+            Report += clothes.Found
+                ? $"clothes over the legs: {clothes.Across} triangles hang across between them, from {clothes.Hem:P0} to {clothes.Top:P0} of the height; under them the legs part up to {clothes.LegsTop:P0} (outside {modelCrotch:P0})\n"
+                : $"clothes over the legs: none (legs part up to {modelCrotch:P0})\n";
+            ClothesOver = clothes.Found && opt.Legs is "auto" or "separate" ? clothes.Over : null;
+            ClothesUnder = clothes.Under;
             float fighterCrotch = Crotch(fighter.Vertices.Select(v => v.Position).ToArray(), fighterTris, (fighter.Min.X + fighter.Max.X) / 2, fighter.Min.Y, fighterSize.Y);
 
             // the leg bones' influence reaches past where the legs visibly part (thighs run up to the hips),
@@ -461,11 +490,12 @@ namespace SkinTool
             // a slim model whose legs part well up but still low on its body (Linguini's shins under a long
             // coat) has real legs under it: they run up to the hips like under a dress, rather than the coat
             // being read as a body with no legs. A wide one with short legs (BMO's box) isn't
-            bool coat = opt.Legs == "auto" && !opt.Dress && modelCrotch >= 0.15f && modelCrotch < fighterCrotch * 0.5f
-                && Slim(shape, (min.X + max.X) / 2, min.Y, size.Y, modelCrotch);
+            // so do legs found under clothes that hang across between them (Peach's dress, Linguini's apron)
+            bool coat = opt.Legs == "auto" && !opt.Dress && (clothes.Found || modelCrotch >= 0.15f && modelCrotch < fighterCrotch * 0.5f
+                && Slim(shape, (min.X + max.X) / 2, min.Y, size.Y, modelCrotch));
             if (coat)
                 Report += "long coat: the model's legs run up under it\n";
-            bool stubby = opt.Legs switch { "separate" => false, "body" or "cut" => true, _ => modelCrotch < fighterCrotch * 0.5f && !coat };
+            bool stubby = opt.Legs switch { "separate" => false, "body" or "cut" => true, _ => modelCrotch < fighterCrotch * 0.5f && !coat && !clothes.Found };
             // a long dress hides where the fighter's legs part (Zelda, Peach): its legs run up to the hip
             // joints under the dress. The model's legs are whatever is below those joints once it stands in
             // the fighter's place, so a pair of shorts bends with the thighs inside it and bare shins with
@@ -1369,6 +1399,10 @@ namespace SkinTool
                     w[i] = (float[])sum.Clone();
             }
 
+            // 3a. clothes over the legs
+            if (ClothesOver != null && ClothesOver.Length == n && opt.Clothes == "outside")
+                ClothesOutside(w, boneCount, model.Triangles, fighter, adj);
+
             // 3b. an outline shell is a slightly bigger copy of the model around it: each of its points moves
             // exactly as the nearest point of the model, or in a pose it slides across the model and covers it
             var shell = new bool[n];
@@ -1420,6 +1454,173 @@ namespace SkinTool
             int rigid = RigidPart.Count(r => r);
             Report += $"{Part.Max() + 1} parts, {rigid} of {n} vertices in small parts that move as one piece\n";
             Report += $"bones used: {string.Join(",", Weights.SelectMany(x => x.Select(e => e.Bone)).Distinct().OrderBy(b => b))}\n";
+        }
+
+        /// <summary>
+        /// Clothes hanging across between the legs (a coat, apron or dress) stay one sheet over them, as cloth
+        /// does: from the waist down each point follows the hips less and the thighs more, the side over
+        /// a leg mostly that leg and the middle both legs alike, so the sheet stretches between the legs in a
+        /// stride instead of tearing down the middle. The legs under it are drawn in a little, so they stay
+        /// under it rather than poking through.
+        /// </summary>
+        private void ClothesOutside(float[][] w, int boneCount, List<ObjModel.Triangle> triangles, FighterMesh fighter, HashSet<int>[] adj)
+        {
+            var (hipJoint, leftJoint, rightJoint, leftPlus) = LegJoints;
+            if (hipJoint < 0 || Remap[hipJoint] < 0 || Remap[leftJoint] < 0 || Remap[rightJoint] < 0)
+                return;
+            int hip = Remap[hipJoint], plus = Remap[leftPlus ? leftJoint : rightJoint], minus = Remap[leftPlus ? rightJoint : leftJoint];
+            int n = Positions.Length;
+            // an outline shell's points go with the model point they stand off (the nearest)
+            var shell = new bool[n];
+            var inModel = new bool[n];
+            foreach (var t in triangles)
+                foreach (var c in new[] { t.A.Position, t.B.Position, t.C.Position })
+                    if (t.Outline) shell[c] = true; else inModel[c] = true;
+            // the clothes go on up to where the legs start (the hips, under a coat): what's above the
+            // pieces hanging across, joined to them and still on a leg, is the same clothes
+            var near = new List<int>[n];
+            foreach (var t in triangles.Where(t => !t.Outline))
+                foreach (var (u, v) in new[] { (t.A.Position, t.B.Position), (t.B.Position, t.C.Position), (t.C.Position, t.A.Position) })
+                {
+                    (near[u] ??= new List<int>()).Add(v);
+                    (near[v] ??= new List<int>()).Add(u);
+                }
+            bool Leg(int i) => ModelRegion[i] == LegLeft || ModelRegion[i] == LegRight;
+            float acrossTop = Enumerable.Range(0, n).Where(i => ClothesOver[i]).Select(i => Positions[i].Y).DefaultIfEmpty(float.MinValue).Max();
+            float acrossHem = Enumerable.Range(0, n).Where(i => ClothesOver[i]).Select(i => Positions[i].Y).DefaultIfEmpty(float.MaxValue).Min();
+            // and the rest of what hangs round the legs at those heights (a petticoat, a frill), whatever isn't
+            // the legs themselves
+            for (int i = 0; i < n; i++)
+                if (inModel[i] && Leg(i) && !ClothesUnder[i] && Positions[i].Y >= acrossHem && Positions[i].Y <= acrossTop)
+                    ClothesOver[i] = true;
+            var grow = new Queue<int>(Enumerable.Range(0, n).Where(i => ClothesOver[i]));
+            while (grow.Count > 0)
+                foreach (int j in near[grow.Dequeue()] ?? new List<int>())
+                    if (!ClothesOver[j] && Leg(j) && Positions[j].Y >= acrossTop)
+                    {
+                        ClothesOver[j] = true;
+                        grow.Enqueue(j);
+                    }
+            var modelPoints = Enumerable.Range(0, n).Where(i => inModel[i]).ToArray();
+            var source = new Dictionary<int, int>();
+            for (int i = 0; i < n; i++)
+                if (shell[i] && !inModel[i])
+                {
+                    source[i] = modelPoints.MinBy(j => Vector3.DistanceSquared(Positions[i], Positions[j]));
+                    ClothesOver[i] = ClothesOver[source[i]];
+                }
+            var over = Enumerable.Range(0, n).Where(i => ClothesOver[i]).ToList();
+            if (over.Count == 0)
+                return;
+            float hem = over.Min(i => Positions[i].Y), top = over.Max(i => Positions[i].Y);
+            float lo = over.Min(i => Positions[i].X), hi = over.Max(i => Positions[i].X);
+            float mid = (lo + hi) / 2, half = MathF.Max((hi - lo) / 2, 1e-4f);
+            // a fighter in a dress of its own (Peach) swings it with skirt joints in every move: the
+            // clothes take the weights of the nearest points of that dress
+            var skirt = Skirt == null ? new List<FighterMesh.Vertex>()
+                : fighter.Vertices.Where(v => Skirt.Contains(v.Bones[Array.IndexOf(v.Weights, v.Weights.Max())])).ToList();
+            if (skirt.Count >= 50)
+            {
+                foreach (int i in over.Where(i => !source.ContainsKey(i)))
+                {
+                    var acc = new float[boneCount];
+                    foreach (var v in skirt.OrderBy(v => Vector3.DistanceSquared(Lookup[i], v.Position)).Take(6))
+                    {
+                        float iw = 1f / (Vector3.DistanceSquared(Lookup[i], v.Position) + 1e-4f);
+                        for (int b = 0; b < v.Bones.Length; b++)
+                            acc[v.Bones[b]] += v.Weights[b] * iw;
+                    }
+                    Normalize(acc);
+                    w[i] = acc;
+                }
+                // neighbours may have found different chains of the dress: evened out over the surface
+                for (int pass = 0; pass < 8; pass++)
+                {
+                    var next = (float[][])w.Clone();
+                    foreach (int i in over.Where(i => !source.ContainsKey(i)))
+                    {
+                        var round = adj[i].Where(j => ClothesOver[j]).ToList();
+                        if (round.Count == 0)
+                            continue;
+                        var r = new float[boneCount];
+                        foreach (int j in round)
+                            for (int b = 0; b < boneCount; b++)
+                                r[b] += w[j][b] / round.Count;
+                        for (int b = 0; b < boneCount; b++)
+                            r[b] = 0.5f * w[i][b] + 0.5f * r[b];
+                        next[i] = r;
+                    }
+                    Array.Copy(next, w, w.Length);
+                }
+                Report += $"clothes over the legs swing with the fighter's own dress (joints {string.Join(",", Skirt.OrderBy(j => j))})\n";
+            }
+            else foreach (int i in over)
+            {
+                var p = Positions[i];
+                // down the clothes: the hips at the waist, mostly the thighs at the hem
+                float down = Math.Clamp((top - p.Y) / MathF.Max(top - hem, 1e-4f), 0, 1);
+                float legs = 0.35f + 0.6f * down;
+                // across: the side over a leg follows it most, the middle both alike
+                float side = 0.5f + 0.45f * Math.Clamp((p.X - mid) / (half * 0.6f), -1, 1);
+                w[i] = new float[boneCount];
+                w[i][hip] += 1 - legs;
+                w[i][plus] += legs * side;
+                w[i][minus] += legs * (1 - side);
+            }
+
+            // the legs under the clothes, drawn in towards their own middle, more the higher up under the clothes
+            int drawn = 0;
+            float span = MathF.Max(top - hem, 1e-4f);
+            var before = (Vector3[])Positions.Clone();
+            var under = Enumerable.Range(0, n).Where(i => !ClothesOver[i] && !source.ContainsKey(i) && (ModelRegion[i] == LegLeft || ModelRegion[i] == LegRight)
+                && Positions[i].Y > hem - span * 0.05f && Positions[i].Y < top).ToList();
+            const int bands = 12;
+            foreach (int region in new[] { LegLeft, LegRight })
+                foreach (var band in under.Where(i => ModelRegion[i] == region).GroupBy(i => Math.Clamp((int)((Positions[i].Y - hem) / span * bands), 0, bands - 1)))
+                {
+                    var c = band.Aggregate(Vector3.Zero, (a, i) => a + Positions[i]) / band.Count();
+                    foreach (int i in band)
+                    {
+                        float k = 0.3f * SmoothStep(hem - span * 0.05f, hem + span * 0.15f, Positions[i].Y);
+                        var to = new Vector3(c.X, Positions[i].Y, c.Z);
+                        Positions[i] += (to - Positions[i]) * k;
+                        drawn++;
+                    }
+                }
+            foreach (var (i, j) in source)
+                Positions[i] += Positions[j] - before[j];
+
+            // and they move with the clothes over them, so a thigh swinging forward takes the clothes with it
+            // rather than coming out through them; at the hem they ease back into their own leg
+            var overModel = over.Where(i => !source.ContainsKey(i)).ToArray();
+            foreach (int i in under)
+            {
+                float k = SmoothStep(hem - span * 0.05f, hem + span * 0.2f, before[i].Y);
+                if (k <= 0)
+                    continue;
+                int j = overModel.MinBy(o => Vector3.DistanceSquared(before[i], before[o]));
+                for (int b = 0; b < boneCount; b++)
+                    w[i][b] = w[i][b] * (1 - k) + w[j][b] * k;
+            }
+            Report += $"clothes over the legs stay outside them: {over.Count} points blend the hips and both thighs; {drawn} leg points under them drawn in and moving with them\n";
+        }
+
+        /// <summary>
+        /// The joints a fighter's own skirt or dress hangs from: below its hips, the main joint of fighter
+        /// points that are neither on a leg nor on a bone the skins use (Peach's six chains round her dress).
+        /// </summary>
+        private static HashSet<int> SkirtJoints(FighterMesh fighter, Skeleton sk, int[] remap, int left, int right)
+        {
+            float hipY = (sk.Position(left).Y + sk.Position(right).Y) / 2;
+            var joints = new HashSet<int>();
+            foreach (var v in fighter.Vertices.Where(v => v.Position.Y < hipY))
+            {
+                int d = v.Bones[Array.IndexOf(v.Weights, v.Weights.Max())];
+                bool leg = d == left || d == right || IsAncestor(sk, left, d) || IsAncestor(sk, right, d);
+                if (!leg && remap[d] != d && !IsAncestor(sk, d, left) && !IsAncestor(sk, d, right))
+                    joints.Add(d);
+            }
+            return joints.Count >= 4 ? joints : null;
         }
 
         private void Attach(float[][] w, HashSet<int>[] adj, int boneCount, List<ObjModel.Triangle> triangles)

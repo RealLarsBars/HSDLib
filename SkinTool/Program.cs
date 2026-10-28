@@ -13,7 +13,7 @@ namespace SkinTool
         const string Usage =
 @"skintool build --model <model.obj/.fbx/.dae|model.zip> --dat <costume.dat> [--dat <costume.dat> ...] --out <folder|out.zip>
                [--fighter <Pl**.dat>] [--bones 41,22,...] [--scale 1.0] [--width 1.0] [--height 1.0] [--rotate 0 | x,y,z] [--move forward[,up]] [--textures <costume.dat>=<folder> ...]
-               [--legs auto|separate|body|cut] [--arms auto|fighter|body] [--neck auto|none|0.6] [--tail yes|no] [--attach yes|no] [--style normal|animelee] [--leg-band 0.3] [--keep-shape]
+               [--legs auto|separate|body|cut|dress] [--clothes outside|legs] [--arms auto|fighter|body] [--neck auto|none|0.6] [--tail yes|no] [--attach yes|no] [--style normal|animelee] [--leg-band 0.3] [--keep-shape]
                [--pick <model in the zip or folder>] [--weapon <name>=<model|zip> [--weapon-pick <name>=<model>] [--weapon-flip <name>] ...]
                [--preview <out.png> [--anims <Pl**AJ.dat>]] [--overlay <out.png> [--fit-only]] [--portraits <folder>]
 skintool models <zip|folder> --out <folder>
@@ -38,6 +38,9 @@ build    Swaps the model into every costume given, keeping each costume's skelet
          goes up off the floor.
          --legs says how the model's legs work: separate legs, a body that works as legs (the bottom
          bends with the fighter's legs), or a bottom cut into two legs; auto picks from its shape.
+         --clothes is for clothes found hanging across between the legs (a coat, apron or dress with legs
+         under it): outside (the default) keeps them one sheet over the legs, legs splits them to follow
+         each leg like trousers.
          --arms fighter always moves its arms onto the fighter's, body keeps them mostly with the body.
          --neck is where the head starts, as a share of the model's height: everything above follows the
          head bone alone, so a wide head or face moves as one piece. auto finds a neck, none turns it off.
@@ -201,6 +204,7 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                 switch (name)
                 {
                     case "legs": opt.Legs = Rule(name, value, "auto", "separate", "body", "cut", "dress"); break;
+                    case "clothes": opt.Clothes = Rule(name, value, "outside", "legs"); break;
                     case "arms": opt.Arms = Rule(name, value, "auto", "fighter", "body"); break;
                     case "scale": opt.Scale = float.Parse(value, CultureInfo.InvariantCulture); break;
                     case "width": opt.Width = Stretch(name, value); break;
@@ -410,6 +414,7 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                     case "--bones": opt.Bones = Next().Split(',').Select(int.Parse).ToArray(); break;
                     case "--keep-shape": opt.Conform = false; break;
                     case "--legs": opt.Legs = Rule("legs", Next(), "auto", "separate", "body", "cut", "dress"); break;
+                    case "--clothes": opt.Clothes = Rule("clothes", Next(), "outside", "legs"); break;
                     case "--arms": opt.Arms = Rule("arms", Next(), "auto", "fighter", "body"); break;
                     case "--neck": opt.Neck = Neck(Next()); break;
                     case "--tail": opt.HasTail = YesNo("--tail", Next()); break;
@@ -606,7 +611,8 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                 opt.Roles = map;
             }
             opt.StretchyFeet = BoneMaps.StretchyFeet.Contains(BoneMaps.Code(dats[0]) ?? "");
-            opt.Dress = BoneMaps.Dress.Contains(BoneMaps.Code(dats[0]) ?? "") || opt.Legs == "dress";
+            opt.OwnDress = BoneMaps.Dress.Contains(BoneMaps.Code(dats[0]) ?? "");
+            opt.Dress = opt.OwnDress || opt.Legs == "dress";
             if (opt.Legs == "dress")
                 opt.Legs = "separate";
             if (opt.HasTail)
