@@ -28,6 +28,13 @@ namespace SkinTool
             ("Guard", 0f),
         };
 
+        // moves where a fighter gets low, for keeping a skin out of the floor
+        public static readonly (string Name, float At)[] FloorPoses = new[]
+        {
+            "Wait1", "Walk", "Dash", "Run", "Turn", "Squat", "SquatWait", "SquatRv", "Landing", "Guard", "Catch",
+            "AttackLw3", "AttackLw4", "AttackHi3", "AttackS4", "Escape",
+        }.SelectMany(n => new[] { (n, 0f), (n, 0.5f) }).ToArray();
+
         public static List<Preview.Pose> Load(string fighterDat, string animDat, (string Name, float At)[] wanted)
         {
             var fighter = new HSDRawFile(fighterDat);

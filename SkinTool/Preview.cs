@@ -337,6 +337,35 @@ namespace SkinTool
             return FormattableString.Invariant($"{share:P0} of the skin gets pulled apart in some moves, mostly around {where} (worst in {move}). It may look torn in game: check the preview, and try moving the head line or another Arms setting.");
         }
 
+        /// <summary>
+        /// How far below the floor (y = 0) the costume's lowest point goes in each pose, and the bone
+        /// most of the lowest points follow, for comparing a skin with the costume it came from.
+        /// </summary>
+        public static List<(string Pose, float Low, int Bone)> FloorDepth(string dat, HSDRaw.Melee.Pl.SBM_FighterData fighter, List<Pose> poses)
+        {
+            var file = new HSDRawFile(dat);
+            var sk = new Skeleton((HSD_JOBJ)file.Roots[0].Data);
+            var hidden = fighter != null ? Slots.HiddenByDefault(fighter) : new HashSet<int>();
+            var verts = Decode(sk).Where(t => !hidden.Contains(t.Slot)).SelectMany(t => new[] { t.A, t.B, t.C }).Distinct().ToList();
+            var result = new List<(string, float, int)>();
+            foreach (var pose in poses)
+            {
+                var skin = PosedSkinning(sk, pose);
+                var posed = verts.Select(v =>
+                {
+                    var p = Vector3.Zero;
+                    for (int i = 0; i < v.Bones.Length; i++)
+                        p += Vector3.Transform(v.Pos, skin[v.Bones[i]]) * v.Weights[i];
+                    return (v, p);
+                }).OrderBy(x => x.p.Y).ToList();
+                if (posed.Count == 0) continue;
+                var low = posed.Take(Math.Max(1, posed.Count / 50)).ToList();
+                int bone = low.GroupBy(x => x.v.Bones[Array.IndexOf(x.v.Weights, x.v.Weights.Max())]).OrderByDescending(g => g.Count()).First().Key;
+                result.Add((pose.Name, posed[0].p.Y, bone));
+            }
+            return result;
+        }
+
         // Past 4x by area: Fox's own skin 0.5 %, Monty on 7 fighters 0.1 to 1.5 %, Squidward with his face
         // read as arms 2.9 % and with his head as arms 7.2 %
         const float StretchLimit = 4f, StretchWarn = 0.025f;
@@ -593,7 +622,7 @@ namespace SkinTool
             return tris;
         }
 
-        static Matrix4x4[] PosedSkinning(Skeleton sk, Pose pose)
+        internal static Matrix4x4[] PosedSkinning(Skeleton sk, Pose pose)
         {
             int n = sk.Joints.Count;
             var world = new Matrix4x4[n];
