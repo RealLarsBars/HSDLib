@@ -60,7 +60,9 @@ fighter's arms. The tool looks for a neck: a narrow spot in the upper half with 
 least half as wide again and as wide as the body. Everything above that line follows the fighter's
 head bone alone, blending in over a short band, so the head and face move as one piece. `--neck 0.6`
 sets the line by hand (a share of the model's height), `--neck none` turns it off. The size check
-(`--overlay`) draws the line dashed in yellow.
+(`--overlay`) draws the line dashed in yellow. A head that is a piece of its own on top of the model,
+above the fighter's shoulders (Linguini's, sunk in a high collar), follows the head bone too, and so do
+the hat and hair sitting on it.
 
 **Stretch check.** With `--fighter` and `--anims`, a build poses the first costume in the fighter's
 test moves and measures how far each triangle's longest edge grows. When more than 2.5% of the skin's
@@ -157,7 +159,8 @@ into the face in place of its own, and the eyelashes of the other expressions ar
 A model made of separate pieces (a shirt with the arms as their own meshes, legs inside a pair of shorts)
 keeps them joined: where a point of one piece touches another (within 1% of the model's size), both sides
 take the same weights, and the weights around the join ease into them, so the join can't open in any pose.
-Small details that move as one piece (buttons, claws) and tails are left alone. `--attach no` (or
+Small details that move as one piece (buttons, claws) and tails are left alone. A body piece keeps its
+shape (BMO's box) unless it carries the arms: a coat with its sleeves bends at the shoulders and elbows. `--attach no` (or
 `attach = no` in skin.txt) turns it off, for loose pieces meant to swing on their own.
 
 ## Tail

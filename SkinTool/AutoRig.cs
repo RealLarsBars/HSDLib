@@ -131,6 +131,8 @@ namespace SkinTool
         // the model's legs are pressed together all the way up (see LegsTogether)
         private bool LegsPressed;
         private float HipY = float.NaN, FloorY, MiddleX, HalfWidth, MiddleZ, HalfDepth;
+        // the height of the fighter's shoulder joints (NaN without a bone map)
+        private float ShoulderY = float.NaN;
 
         private int[] BoneRegion;
         private int[] FighterRegion;
@@ -151,6 +153,8 @@ namespace SkinTool
                 rig.Report += $"detail bones folded into their parents: {string.Join(",", merged)}\n";
             rig.HeadBone = head;
             rig.FighterRegions(fighter, skeleton, head, opt.Roles);
+            if (opt.Roles != null && opt.Roles.TryGetValue("lsh", out int lsh) && opt.Roles.TryGetValue("rsh", out int rsh))
+                rig.ShoulderY = (skeleton.Position(lsh).Y + skeleton.Position(rsh).Y) / 2;
             rig.Fit(model, fighter, skeleton, opt);
             rig.Transfer(model, fighter, opt);
             if (rig.LegsPressed)
@@ -1212,6 +1216,35 @@ namespace SkinTool
                 }
             }
 
+            // a head modelled as a piece of its own (Linguini's, sitting in his collar) is the head, not a
+            // detail on the body: it follows the head bone alone, so it turns and nods, and the hat, eyes
+            // and hair sitting on it follow it, instead of all staying fixed to the collar
+            if (HeadBone >= 0 && Remap[HeadBone] >= 0)
+            {
+                int head = Remap[HeadBone];
+                float bodyTop = Enumerable.Range(0, n).Where(i => !RigidPart[i]).Select(i => Positions[i].Y).DefaultIfEmpty(float.MaxValue).Max();
+                foreach (var part in Enumerable.Range(0, Part.Max() + 1))
+                {
+                    var members = Enumerable.Range(0, n).Where(i => Part[i] == part).ToList();
+                    if (members.Count < n * 0.03f || !RigidPart[members[0]] || members.Any(i => Tail[i]))
+                        continue;
+                    // it sits on top of the model, above the fighter's shoulders (a big head sunk in a high
+                    // collar picks up the chest's weights), not on the body's surface (Monty's eyes, with his
+                    // body going on above them)
+                    bool onTop = !float.IsNaN(ShoulderY) && members.Max(i => Positions[i].Y) > bodyTop
+                        && members.Count(i => Positions[i].Y > ShoulderY) * 4 > members.Count * 3;
+                    if (!onTop)
+                        continue;
+                    foreach (var i in members)
+                    {
+                        w[i] = new float[boneCount];
+                        w[i][head] = 1;
+                        RigidPart[i] = false;
+                    }
+                    Report += $"part {part}: {members.Count} vertices are the head, follow bone {head}\n";
+                }
+            }
+
             var body = Enumerable.Range(0, n).Where(i => !RigidPart[i]).ToList();
             foreach (var part in Enumerable.Range(0, Part.Max() + 1))
             {
@@ -1509,7 +1542,10 @@ namespace SkinTool
                 RigidPart[i] = sizes[Part[i]] < largest * 0.25f && !Limb(Part[i]);
                 // a body piece keeps its shape only when it sits above the legs (BMO's box); one reaching
                 // down into them (Peggy's shorts) bends with them, or the legs come out from under it
-                BodyPiece[i] = !RigidPart[i] && bodyCount[Part[i]] * 2 > sizes[Part[i]] && lowCount[Part[i]] * 10 <= sizes[Part[i]];
+                // and one that carries the arms (a coat with its sleeves, Linguini's) bends at the shoulders and
+                // elbows like any body, or the arms stay stuck straight out in every move
+                BodyPiece[i] = !RigidPart[i] && bodyCount[Part[i]] * 2 > sizes[Part[i]] && lowCount[Part[i]] * 10 <= sizes[Part[i]]
+                    && limbCount[Part[i]] * 5 <= sizes[Part[i]];
             }
             Report += $"the model is {count} separate pieces: pieces that touch bend together\n";
         }
