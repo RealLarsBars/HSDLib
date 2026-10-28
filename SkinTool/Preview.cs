@@ -3,6 +3,7 @@ using HSDRaw.Common;
 using HSDRaw.GX;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Numerics;
 
@@ -262,6 +263,108 @@ namespace SkinTool
             if (weapons.Length > 0)
                 Console.WriteLine($"weapons row: {string.Join(", ", weapons.Select(w => w.Key))}");
             Console.WriteLine($"wrote {output}");
+            return 0;
+        }
+
+        /// <summary>
+        /// Writes a finished costume's own model back out as an OBJ in its bind pose (with its MTL and
+        /// textures), to build it again when the model it came from is gone. With the fighter's data,
+        /// the far-away model and the weapons are left out; each weapon goes in its own OBJ beside it.
+        /// </summary>
+        public static int Export(string[] args)
+        {
+            string output = args[1], dat = args[2];
+            var fighter = args.Length > 4 && args[3] == "--fighter" ? Slots.Load(args[4]) : null;
+            var sk = new Skeleton((HSD_JOBJ)new HSDRawFile(dat).Roots[0].Data);
+            var all = Decode(sk);
+            var code = BoneMaps.Code(dat);
+            var hidden = fighter != null ? Slots.HiddenByDefault(fighter) : new HashSet<int>();
+            var weaponSlots = fighter != null ? Weapons.AllSlots(fighter, code) : new HashSet<int>();
+
+            void Write(string path, List<Tri> tris)
+            {
+                string dir = Path.GetDirectoryName(Path.GetFullPath(path)), name = Path.GetFileNameWithoutExtension(path);
+                var textures = tris.Select(t => t.Tex).Where(t => t != null).Distinct().ToList();
+                using (var mtl = new StreamWriter(Path.Combine(dir, name + ".mtl")))
+                    for (int k = 0; k < textures.Count; k++)
+                    {
+                        var t = textures[k];
+                        var img = new Bitmap(t.W, t.H);
+                        for (int i = 0; i < t.W * t.H; i++)
+                        {
+                            img.Rgba[i * 4] = t.Bgra[i * 4 + 2];
+                            img.Rgba[i * 4 + 1] = t.Bgra[i * 4 + 1];
+                            img.Rgba[i * 4 + 2] = t.Bgra[i * 4];
+                            img.Rgba[i * 4 + 3] = t.Bgra[i * 4 + 3];
+                        }
+                        img.SavePng(Path.Combine(dir, $"{name}_{k}.png"));
+                        mtl.WriteLine($"newmtl m{k}\nmap_Kd {name}_{k}.png");
+                    }
+                using var obj = new StreamWriter(path);
+                obj.WriteLine($"mtllib {name}.mtl");
+                string F(float f) => f.ToString("0.#####", System.Globalization.CultureInfo.InvariantCulture);
+                // a point shared by meshes is stored once per mesh, some relative to a bone and some not, so
+                // the copies differ in the last digits; they're joined again or the surface would come apart
+                var weld = new Dictionary<(int, int, int), Vector3>();
+                foreach (var t in tris)
+                    foreach (var v in new[] { t.A, t.B, t.C })
+                    {
+                        var key = ((int)MathF.Round(v.Pos.X * 1000), (int)MathF.Round(v.Pos.Y * 1000), (int)MathF.Round(v.Pos.Z * 1000));
+                        if (!weld.TryGetValue(key, out var p))
+                            weld[key] = p = v.Pos;
+                        v.Pos = p;
+                    }
+                // smooth normals: each point's faces averaged, so the rebuilt surface isn't faceted
+                var normals = new Dictionary<Vector3, Vector3>();
+                foreach (var t in tris)
+                {
+                    var fn = Vector3.Cross(t.B.Pos - t.A.Pos, t.C.Pos - t.A.Pos);
+                    foreach (var v in new[] { t.A, t.B, t.C })
+                        normals[v.Pos] = normals.GetValueOrDefault(v.Pos) + fn;
+                }
+                // each point written once (with one normal), as a modelling program would, so the build
+                // sees one surface and gives each point one set of weights
+                var index = new Dictionary<Vector3, int>();
+                foreach (var t in tris)
+                    foreach (var v in new[] { t.A, t.B, t.C })
+                        if (!index.ContainsKey(v.Pos))
+                        {
+                            index[v.Pos] = index.Count + 1;
+                            var vn = Vector3.Normalize(normals[v.Pos] + new Vector3(0, 1e-9f, 0));
+                            obj.WriteLine($"v {F(v.Pos.X)} {F(v.Pos.Y)} {F(v.Pos.Z)}\nvn {F(vn.X)} {F(vn.Y)} {F(vn.Z)}");
+                        }
+                int uv = 0;
+                foreach (var g in tris.GroupBy(t => t.Tex))
+                {
+                    if (g.Key != null)
+                        obj.WriteLine($"usemtl m{textures.IndexOf(g.Key)}");
+                    foreach (var t in g)
+                    {
+                        var c = new[] { t.A, t.B, t.C };
+                        foreach (var v in c)
+                            obj.WriteLine($"vt {F(v.UV.X)} {F(1 - v.UV.Y)}");
+                        obj.WriteLine("f " + string.Join(" ", c.Select((v, k) => $"{index[v.Pos]}/{uv + k + 1}/{index[v.Pos]}")));
+                        uv += 3;
+                    }
+                }
+                Console.WriteLine($"wrote {path} ({tris.Count} triangles, {textures.Count} textures)");
+            }
+
+            // skin meshes are drawn from both sides; one-sided parts of a skin are its outline shells, which
+            // come back from the build (--style animelee), so they're left out
+            bool skin = all.Any(t => t.TwoSided);
+            var model = all.Where(t => !hidden.Contains(t.Slot) && !weaponSlots.Contains(t.Slot) && (t.TwoSided || !skin)).ToList();
+            if (all.Any(t => t.Unlit && !weaponSlots.Contains(t.Slot) && !hidden.Contains(t.Slot)) && all.Any(t => !t.TwoSided && skin && !weaponSlots.Contains(t.Slot)))
+                Console.WriteLine("the skin has the Animelee look (an outline and flat lighting): build it again with --style animelee");
+            Write(output, model);
+            if (fighter != null)
+                foreach (var w in Weapons.For(code))
+                {
+                    var held = Weapons.HeldSlots(fighter, w);
+                    var tris = all.Where(t => held.Contains(t.Slot) && (t.TwoSided || !skin)).ToList();
+                    if (tris.Count > 0)
+                        Write(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(output)), w.Key + ".obj"), tris);
+                }
             return 0;
         }
 

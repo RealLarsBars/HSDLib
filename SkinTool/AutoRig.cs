@@ -94,6 +94,12 @@ namespace SkinTool
 
         // positions used only to find matching fighter vertices
         public Vector3[] Lookup;
+
+        // where a moved arm's points take their weights from, on the fighter's arm (null: from Lookup's usual place)
+        private Vector3?[] ArmLookup;
+
+        // how far along such an arm each point is, 0 at the body, 1 at the tip
+        private float[] ArmU;
         public Vector3[] Normals;
         public SkinBuilder.Influence[][] Weights;
 
@@ -134,6 +140,12 @@ namespace SkinTool
 
         private int[] BoneRegion;
         private Skeleton Skel;
+
+        // arms moved onto the fighter's own arms (ConformArm): they bend where its arms bend
+        private readonly HashSet<int> Conformed = new();
+
+        // those of them bent down to hang along a fighter whose arms hang (Ganondorf)
+        private readonly HashSet<int> Hung = new();
         private int[] FighterRegion;
         public int[] ModelRegion;
 
@@ -268,6 +280,11 @@ namespace SkinTool
                     break;
                 int bone = pull.OrderByDescending(kv => kv.Value).First().Key;
                 done.Add(bone);
+                // an arm laid along the fighter's own arm goes where the fighter's hand goes: handing it
+                // to the shoulder or the hips to keep the hand off the floor stiffens it into a T-pose
+                // (Gusteau on Ganondorf); a hand brushing the floor in a crouch is the lesser evil
+                if (Hung.Contains(BoneRegion[bone]))
+                    continue;
                 var part = Enumerable.Range(0, n).Where(i => Weights[i].Any(e => e.Bone == bone)).ToList();
                 float before = part.Sum(i => Depth(i));
 
@@ -506,15 +523,38 @@ namespace SkinTool
                 int s = Slice((q.Y - min.Y) / size.Y);
                 reach[s] = MathF.Max(reach[s], MathF.Abs(q.X - cx));
             }
-            var bodySlices = Enumerable.Range(Slice(modelCrotch), slices - Slice(modelCrotch)).Where(s => reach[s] > 0).Select(s => reach[s]).OrderBy(r => r).ToList();
-            float typical = bodySlices.Count > 0 ? bodySlices[bodySlices.Count / 2] : size.X / 2;
+            // the neck is found on the points alone, as before (Spyro's wings and horns between his points
+            // would hide his neck)
+            var pointReach = (float[])reach.Clone();
+            // a low-poly model (Gusteau) has heights with no point on them, and its few points sit where the
+            // outline bulges, so those heights looked wider than the rest and counted as arms: the outline is
+            // also taken along the edges, at every slice they cross
+            foreach (var t in model.Triangles)
+                foreach (var (a, b) in new[] { (t.A.Position, t.B.Position), (t.B.Position, t.C.Position), (t.C.Position, t.A.Position) })
+                {
+                    int from = Slice((pts[a].Y - min.Y) / size.Y), to = Slice((pts[b].Y - min.Y) / size.Y);
+                    if (Math.Abs(from - to) < 2)
+                        continue;
+                    for (int s = Math.Min(from, to) + 1; s < Math.Max(from, to); s++)
+                    {
+                        float y = min.Y + (s + 0.5f) / slices * size.Y;
+                        float k = Math.Clamp((y - pts[a].Y) / (pts[b].Y - pts[a].Y), 0, 1);
+                        reach[s] = MathF.Max(reach[s], MathF.Abs(pts[a].X + (pts[b].X - pts[a].X) * k - cx));
+                    }
+                }
+            float Typical(float[] r)
+            {
+                var body = Enumerable.Range(Slice(modelCrotch), slices - Slice(modelCrotch)).Where(s => r[s] > 0).Select(s => r[s]).OrderBy(x => x).ToList();
+                return body.Count > 0 ? body[body.Count / 2] : size.X / 2;
+            }
+            float typical = Typical(reach);
             var bodyReach = new float[slices];
             int top = Enumerable.Range(0, slices).Last(s => reach[s] > 0);
 
             // the neck: above it is all head
             float neck = opt.Neck;
             if (float.IsNaN(neck))
-                neck = FindNeck(reach, typical, top, modelCrotch);
+                neck = FindNeck(pointReach, Typical(pointReach), Enumerable.Range(0, slices).Last(s => pointReach[s] > 0), modelCrotch);
             int neckSlice = neck > 0 ? Slice(neck) : slices;
             if (neck > 0)
             {
@@ -600,13 +640,25 @@ namespace SkinTool
             // An arm that sits far below or above the fighter's arm swings around the fighter's shoulder
             // and wrist from a distance, flinging it about. With a bone map the arm is moved onto the
             // fighter's arm instead; without one, the further off it is, the more it stays with the body.
+            ArmLookup = new Vector3?[pts.Length];
+            ArmU = new float[pts.Length];
             foreach (var (region, a) in arm)
             {
                 string side = region == ArmLeft ? "l" : "r";
                 // only an arm already near the fighter's is moved onto it: lifting a low arm up to the
                 // shoulder bends it into a W that flaps about when running
                 float fittedY = (a.y - origin.Y) * scale * opt.Height + target.Y;
-                bool near = opt.Arms switch { "fighter" => true, "body" => false, _ => MathF.Abs(fittedY - a.fy) < 0.15f * fighterSize.Y };
+                // a fighter whose arms hang down in its bind pose (Ganondorf) has its arm's middle down at its
+                // waist, so a model's arm held out higher up (a T-pose) counts as near the fighter's shoulder too
+                float off = MathF.Abs(fittedY - a.fy);
+                if (fittedY > a.fy && opt.Roles != null && opt.Roles.TryGetValue(side + "sh", out int shoulder)
+                    && opt.Roles.TryGetValue(side + "ha", out int hand))
+                {
+                    var hang = skeleton.Position(hand) - skeleton.Position(shoulder);
+                    if (hang.Y < -0.5f * hang.Length())
+                        off = MathF.Min(off, MathF.Abs(fittedY - skeleton.Position(shoulder).Y));
+                }
+                bool near = opt.Arms switch { "fighter" => true, "body" => false, _ => off < 0.15f * fighterSize.Y };
                 if (opt.Conform && near && opt.Roles != null && opt.Roles.TryGetValue(side + "sh", out int sh) && opt.Roles.TryGetValue(side + "ha", out int ha))
                 {
                     var chain = new List<Vector3> { skeleton.Position(sh) };
@@ -621,12 +673,13 @@ namespace SkinTool
                     var dir = Vector3.Normalize(chain[^1] - chain[^2]);
                     chain.Add(chain[^1] + dir * (past / MathF.Max(MathF.Abs(dir.X), 0.3f)));
                     ConformArm(region, chain, pts, cx, (q, s) => bodyReach[s], Slice, min, size, origin, scale, target);
+                    Conformed.Add(region);
                     Report += $"{RegionNames[region]}: moved onto the fighter's arm\n";
                     continue;
                 }
                 float fitted = (a.y - origin.Y) * scale * opt.Height + target.Y;
-                float off = MathF.Abs(fitted - a.fy) / MathF.Max(a.fTip - a.fRoot, 1e-4f);
-                LimbFollow[region] = Math.Clamp(1 - off, 0.2f, 1);
+                float apart = MathF.Abs(fitted - a.fy) / MathF.Max(a.fTip - a.fRoot, 1e-4f);
+                LimbFollow[region] = Math.Clamp(1 - apart, 0.2f, 1);
                 Report += $"{RegionNames[region]}: {fitted:F1} high next to the fighter's {a.fy:F1}, follows the arm bones {LimbFollow[region]:P0}\n";
             }
 
@@ -651,6 +704,8 @@ namespace SkinTool
                     float fside = fighterReach[Slice((l.Y - fighter.Min.Y) / fighterSize.Y)];
                     l.X = fcx + (q.X - cx) / side * fside;
                 }
+                else if (ArmLookup[i] is Vector3 onArm)
+                    l = onArm;
                 else if (arm.TryGetValue(region, out var a))
                 {
                     // along the arm from shoulder to tip, at the same share of the way on the fighter
@@ -679,7 +734,21 @@ namespace SkinTool
                 int front = paws.Count(z => z > split), back = paws.Count - front;
                 // a real gap (a good part of the body's depth), with feet on both sides of it
                 float depth = paws.Count > 0 ? paws[^1] - paws[0] : 0;
-                if (gap > 0.15f * depth && front >= 4 && back >= 4)
+                // and no foot across it: a long shoe (Gusteau's) has a gap between heel and toe points too,
+                // but the sole joins them low down, where a front paw and a hind one only meet up in the body
+                var low = new int[pts.Length];
+                for (int i = 0; i < low.Length; i++) low[i] = i;
+                int Root(int i) { while (low[i] != i) i = low[i] = low[low[i]]; return i; }
+                bool Low(int i) => (pts[i].Y - min.Y) / size.Y < 0.12f;
+                foreach (var t in model.Triangles)
+                    if (Low(t.A.Position) && Low(t.B.Position) && Low(t.C.Position))
+                    {
+                        low[Root(t.A.Position)] = Root(t.B.Position);
+                        low[Root(t.B.Position)] = Root(t.C.Position);
+                    }
+                var frontFeet = Enumerable.Range(0, pts.Length).Where(i => (pts[i].Y - min.Y) / size.Y < 0.06f && pts[i].Z > split).Select(Root).ToHashSet();
+                bool shoe = Enumerable.Range(0, pts.Length).Any(i => (pts[i].Y - min.Y) / size.Y < 0.06f && pts[i].Z < split && frontFeet.Contains(Root(i)));
+                if (gap > 0.15f * depth && front >= 4 && back >= 4 && !shoe)
                 {
                     // the front legs: in front of the gap, up to where they join the chest
                     float frontTop = Math.Min(modelCrotch * 1.3f, 0.45f);
@@ -791,6 +860,30 @@ namespace SkinTool
                 return chain[^1];
             }
 
+            // which way the fighter's arm runs at a share of the way along it
+            Vector3 Direction(float u)
+            {
+                float d = u * lengths[^1];
+                int k = 1;
+                while (k < chain.Count - 1 && d > lengths[k])
+                    k++;
+                var dir = chain[k] - chain[k - 1];
+                return dir.LengthSquared() > 1e-8f ? Vector3.Normalize(dir) : Vector3.UnitX * MathF.Sign(chain[^1].X - chain[0].X);
+            }
+
+            // an arm hanging down from the fighter's shoulder (Ganondorf's) starts where the model's arm
+            // leaves its body instead: a wide body's arm would otherwise run in over its shoulder to the
+            // fighter's and drop from there, a flat ledge sticking out of the body. Its weights still come
+            // from the fighter's own arm, where it hangs.
+            bool hangs = Direction(0).Y < -0.5f;
+            var shift = hangs ? middle[0] - chain[0] : Vector3.Zero;
+            // and keeps its own length: a short arm (Gusteau's) stretched to the fighter's fingertips reaches
+            // far past where its own hand would be, its weights still spread along the whole fighter's arm
+            float own = tipOf() * scale;
+            float keep = hangs ? Math.Clamp(own / MathF.Max(lengths[^1], 1e-4f), 0.5f, 1) : 1;
+            if (hangs)
+                Report += $"{RegionNames[region]}: {own:F1} long next to the fighter's {lengths[^1]:F1}, keeps {keep:P0} of its length\n";
+
             foreach (var i in members)
             {
                 float u = U(i);
@@ -799,7 +892,20 @@ namespace SkinTool
                 var mid = Vector3.Lerp(middle[b0], middle[b1], Math.Clamp(fb - b0, 0, 1));
                 var offset = Positions[i] - mid;
                 offset.X = 0; // the arm's length is the fighter's now; keep only its thickness
-                var moved = Along(u) + offset;
+                // the model's arm runs sideways; where the fighter's points down (Ganondorf's hang at his sides)
+                // the thickness turns with it, or the arm would be squashed flat along its own length
+                var across = new Vector3(MathF.Sign(Positions[i].X - cx), 0, 0);
+                var to = Direction(u);
+                var axis = Vector3.Cross(across, to);
+                if (hangs && axis.LengthSquared() > 1e-8f)
+                    offset = Vector3.Transform(offset, Quaternion.CreateFromAxisAngle(Vector3.Normalize(axis), MathF.Acos(Math.Clamp(Vector3.Dot(across, to), -1, 1))));
+                var moved = chain[0] + (Along(u) - chain[0]) * keep + shift + offset;
+                if (hangs)
+                {
+                    Hung.Add(region);
+                    ArmLookup[i] = Along(u) + offset;
+                    ArmU[i] = u;
+                }
                 float blend = SmoothStep(0, 0.35f, u);
                 Positions[i] = Vector3.Lerp(Positions[i], moved, blend);
             }
@@ -1233,7 +1339,11 @@ namespace SkinTool
             var sides = !LegsPressed ? adj : adj.Select((near, i) => Leg(i, LegLeft) || Leg(i, LegRight)
                 ? near.Where(j => !(Leg(i, LegLeft) && Leg(j, LegRight) || Leg(i, LegRight) && Leg(j, LegLeft))).ToHashSet()
                 : near).ToArray();
-            Smooth(w, sides, boneCount, opt.SmoothPasses, i => !Foot(i));
+            // an arm hung along the fighter's arm keeps the fighter's arm weights past where it joins the body:
+            // a low-poly arm (Gusteau's) is only a few points long, so smoothing reaches all the way down it
+            // and mixes the body into the hand, and the arm hardly bends
+            bool ArmEnd(int i) => ArmLookup[i] != null && ArmU[i] > 0.3f;
+            Smooth(w, sides, boneCount, opt.SmoothPasses, i => !Foot(i) && !ArmEnd(i));
             // the head is left out: on a model with few points and a big head (Spyro) the head's weights
             // would otherwise soak down through the whole body, and it all bobs with the head
             bool belowNeck(int i) => float.IsNaN(NeckY) || HeadBone < 0 || Positions[i].Y < NeckY - tallest * 0.04f;
@@ -1341,12 +1451,17 @@ namespace SkinTool
                     continue;
                 }
 
+                // a hand on its own at the end of an arm laid along the fighter's arm sits in the sleeve:
+                // it takes the weights of the arm around it, or it takes the belly's it hangs next to
+                // (Gusteau's) and stays behind
+                var sleeve = members.Count(i => Conformed.Contains(ModelRegion[i])) * 2 > members.Count
+                    ? body.Where(j => ModelRegion[j] == ModelRegion[members[0]]).ToList() : null;
                 // the part follows the body where it's attached: weights come from around its base (the
                 // quarter of it nearest the body), not its tip, so it moves exactly as the spot it sits in
                 // on a model built from pieces, a button follows the one piece it sits on (BMO's box), not an
                 // arm or leg that happens to reach near it, or it sinks into the box when that limb moves
-                var under = body;
-                if (BodyPiece.Any(b => b) && body.Count > 0)
+                var under = sleeve != null && sleeve.Count > 0 ? sleeve : body;
+                if (sleeve == null && BodyPiece.Any(b => b) && body.Count > 0)
                 {
                     int closest = body.MinBy(j => members.Min(i => Vector3.DistanceSquared(Positions[i], Positions[j])));
                     under = body.Where(j => Part[j] == Part[closest]).ToList();
@@ -1554,8 +1669,22 @@ namespace SkinTool
             int small = Enumerable.Range(0, n).Count(i => sizes[Part[i]] < n * opt.RigidPartShare);
             if (largest >= n * opt.RigidPartShare && small * 2 < n)
             {
+                // an arm laid along the fighter's arm that is a piece of its own (Squidward's) bends at the
+                // elbow like the fighter's, rather than staying stiff with the body at the shoulder
+                var armPart = new int[sizes.Count];
+                var armLow = Enumerable.Repeat(float.MaxValue, sizes.Count).ToArray();
+                var armHigh = Enumerable.Repeat(float.MinValue, sizes.Count).ToArray();
                 for (int i = 0; i < n; i++)
-                    RigidPart[i] = sizes[Part[i]] < n * opt.RigidPartShare;
+                {
+                    if (Conformed.Contains(ModelRegion[i]))
+                        armPart[Part[i]]++;
+                    armLow[Part[i]] = MathF.Min(armLow[Part[i]], Positions[i].Y);
+                    armHigh[Part[i]] = MathF.Max(armHigh[Part[i]], Positions[i].Y);
+                }
+                float tall = Positions.Max(q => q.Y) - Positions.Min(q => q.Y);
+                bool Arm(int part) => armPart[part] * 2 > sizes[part] && armHigh[part] - armLow[part] > tall * 0.15f;
+                for (int i = 0; i < n; i++)
+                    RigidPart[i] = sizes[Part[i]] < n * opt.RigidPartShare && !Arm(Part[i]);
                 return;
             }
 
