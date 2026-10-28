@@ -786,6 +786,12 @@ namespace SkinTool
             // from the fighter's own arm, where it hangs.
             bool hangs = Direction(0).Y < -0.5f;
             var shift = hangs ? middle[0] - chain[0] : Vector3.Zero;
+            // and keeps its own length: a short arm (Gusteau's) stretched to the fighter's fingertips reaches
+            // far past where its own hand would be, its weights still spread along the whole fighter's arm
+            float own = tipOf() * scale;
+            float keep = hangs ? Math.Clamp(own / MathF.Max(lengths[^1], 1e-4f), 0.5f, 1) : 1;
+            if (hangs)
+                Report += $"{RegionNames[region]}: {own:F1} long next to the fighter's {lengths[^1]:F1}, keeps {keep:P0} of its length\n";
 
             foreach (var i in members)
             {
@@ -802,7 +808,7 @@ namespace SkinTool
                 var axis = Vector3.Cross(across, to);
                 if (hangs && axis.LengthSquared() > 1e-8f)
                     offset = Vector3.Transform(offset, Quaternion.CreateFromAxisAngle(Vector3.Normalize(axis), MathF.Acos(Math.Clamp(Vector3.Dot(across, to), -1, 1))));
-                var moved = Along(u) + shift + offset;
+                var moved = chain[0] + (Along(u) - chain[0]) * keep + shift + offset;
                 if (hangs)
                 {
                     Hung.Add(region);
