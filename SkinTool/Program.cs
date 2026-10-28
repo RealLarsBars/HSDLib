@@ -484,7 +484,7 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                 }
 
                 ReadRules(model, opt, args.Where(a => a.StartsWith("--")).ToHashSet());
-                BuildCostumes(model, dats, outDir, fighterDat, textureFolders, opt, uploads, overlayPng, fitOnly);
+                BuildCostumes(model, dats, outDir, fighterDat, textureFolders, opt, uploads, overlayPng, fitOnly, animDat);
 
                 if (previewPng != null && !fitOnly)
                 {
@@ -571,7 +571,7 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
             return 0;
         }
 
-        static void BuildCostumes(string model, List<string> dats, string outDir, string fighterDat, Dictionary<string, string> textureFolders, AutoRig.Options opt, Dictionary<string, Weapons.Upload> uploads, string overlayPng = null, bool fitOnly = false)
+        static void BuildCostumes(string model, List<string> dats, string outDir, string fighterDat, Dictionary<string, string> textureFolders, AutoRig.Options opt, Dictionary<string, Weapons.Upload> uploads, string overlayPng = null, bool fitOnly = false, string animDat = null)
         {
             if (!fitOnly)
                 Directory.CreateDirectory(outDir);
@@ -618,6 +618,14 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                 }
             }
             var rig = AutoRig.Run(obj, fighter, skeleton, opt);
+            // the fighter's moves, to keep the skin out of the floor in its low ones
+            animDat ??= fighterDat != null ? Path.Combine(Path.GetDirectoryName(Path.GetFullPath(fighterDat)), Path.GetFileNameWithoutExtension(fighterDat) + "AJ.dat") : null;
+            if (fighterData != null && File.Exists(animDat))
+            {
+                var poses = Animations.Load(fighterDat, animDat, Animations.FloorPoses);
+                var lowest = Preview.FloorDepth(dats[0], fighterData, poses);
+                rig.FloorGuard(fighter, skeleton, poses, lowest.Select(l => l.Low).ToList(), fighter.SkinBones.Concat(rig.Weights.SelectMany(w => w.Select(e => e.Bone))).ToHashSet());
+            }
             Console.Write(rig.Report);
             if (overlayPng != null)
                 Preview.Overlay(dats[0], fighterData, obj, rig.Positions, overlayPng, rig.NeckY);
