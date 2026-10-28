@@ -146,8 +146,12 @@ namespace SkinTool
                 head = opt.Head;
             if (opt.Bones != null)
             {
-                rig.Remap = ChosenBoneRemap(fighter, skeleton, opt.Bones, head);
+                var shoulders = opt.Roles == null ? new int[0] : new[] { "lsh", "rsh" }.Where(opt.Roles.ContainsKey).Select(r => opt.Roles[r]).ToArray();
+                rig.Remap = ChosenBoneRemap(fighter, skeleton, opt.Bones, head, shoulders);
                 rig.Report += $"bones from the fighter's bone map: {string.Join(",", opt.Bones)}\n";
+                var helpers = Enumerable.Range(0, rig.Remap.Length).Where(b => shoulders.Contains(rig.Remap[b]) && !opt.Bones.Contains(b) && fighter.BoneExtent.ContainsKey(b)).ToList();
+                if (helpers.Count > 0)
+                    rig.Report += $"shoulder helpers {string.Join(",", helpers)} go to the arms\n";
             }
             else
                 rig.Report += $"detail bones folded into their parents: {string.Join(",", merged)}\n";
@@ -1816,8 +1820,10 @@ namespace SkinTool
         /// Moves every bone's weight onto the bones a bone map lists. A bone that sits on top of a
         /// listed child (a wrist helper on the hand, a neck on the head) goes to that child; anything
         /// else goes the way its parent goes, and bones with no listed parent (hips, tail) join the body.
+        /// A helper hung off the collarbone right at a listed shoulder (Falcon's 37, 43 and 60, which
+        /// shrug on their own in his moves) goes to that shoulder, so the top of the arm moves with the arm.
         /// </summary>
-        private static int[] ChosenBoneRemap(FighterMesh fighter, Skeleton sk, int[] bones, int head)
+        private static int[] ChosenBoneRemap(FighterMesh fighter, Skeleton sk, int[] bones, int head, int[] shoulders = null)
         {
             int n = sk.Joints.Count;
             float near = (fighter.Max.Y - fighter.Min.Y) * 0.05f;
@@ -1843,6 +1849,11 @@ namespace SkinTool
                     .Where(c => allowed.Contains(c) && IsAncestor(sk, b, c) && Vector3.Distance(sk.Position(c), sk.Position(b)) < near)
                     .OrderBy(c => Vector3.Distance(sk.Position(c), sk.Position(b)))
                     .DefaultIfEmpty(-1).First();
+                if (under < 0 && shoulders != null && sk.Parent[b] >= 0)
+                    under = shoulders
+                        .Where(c => c != b && IsAncestor(sk, sk.Parent[b], c) && Vector3.Distance(sk.Position(c), sk.Position(b)) < near)
+                        .OrderBy(c => Vector3.Distance(sk.Position(c), sk.Position(b)))
+                        .DefaultIfEmpty(-1).First();
                 // parents come before children in the joint list, so the parent's answer is already known
                 remap[b] = under >= 0 ? under : sk.Parent[b] >= 0 ? remap[sk.Parent[b]] : body;
                 if (remap[b] < 0 || !allowed.Contains(remap[b]))
