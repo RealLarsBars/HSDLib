@@ -190,8 +190,9 @@ namespace SkinTool
                 model.Triangles.Add(new ObjModel.Triangle { A = C(t[0]), B = C(t[1]), C = C(t[2]), Material = material, Object = "eye area" });
             }
 
-            // the face's lashes come in a set for every expression, each a small piece of its own: only
-            // those on the open eyelids stay, the rest would draw lines across the open eyes
+            // the face's lashes and lid lines come in a set for every expression, each a small piece of its
+            // own: only those joined onto the open eyelids stay, the rest would draw lines across the open
+            // eyes (Peach's smile lids nearly touch the open lid, so joined means sharing its points)
             var lo = points.Aggregate(new Vector3(float.MaxValue), Vector3.Min);
             var hi = points.Aggregate(new Vector3(float.MinValue), Vector3.Max);
             var parent = new Dictionary<int, int>();
@@ -212,13 +213,13 @@ namespace SkinTool
                 Join(t.B.Position, t.C.Position);
             }
             var lashes = model.Triangles.Where(t => t.Material == material && t.Object != "eye area")
-                .GroupBy(t => Root(t.A.Position)).Where(g => g.Count() <= 60)
+                .GroupBy(t => Root(t.A.Position)).Where(g => g.Count() <= 150)
                 .Where(g =>
                 {
                     var ps = g.SelectMany(t => new[] { t.A.Position, t.B.Position, t.C.Position }).Distinct().Select(i => model.Positions[i]).ToList();
                     var c = ps.Aggregate(Vector3.Zero, (a, b) => a + b) / ps.Count;
                     return c.X >= lo.X && c.X <= hi.X && c.Y >= lo.Y && c.Y <= hi.Y
-                        && ps.Min(p => points.Min(q => Vector3.DistanceSquared(p, q))) > weld * weld;
+                        && ps.Min(p => points.Min(q => Vector3.DistanceSquared(p, q))) > weld * weld * 0.01f;
                 })
                 .SelectMany(g => g).ToHashSet();
             model.Triangles.RemoveAll(lashes.Contains);
