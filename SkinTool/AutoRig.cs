@@ -94,6 +94,9 @@ namespace SkinTool
 
         // positions used only to find matching fighter vertices
         public Vector3[] Lookup;
+
+        // where a moved arm's points take their weights from, on the fighter's arm (null: from Lookup's usual place)
+        private Vector3?[] ArmLookup;
         public Vector3[] Normals;
         public SkinBuilder.Influence[][] Weights;
 
@@ -598,13 +601,24 @@ namespace SkinTool
             // An arm that sits far below or above the fighter's arm swings around the fighter's shoulder
             // and wrist from a distance, flinging it about. With a bone map the arm is moved onto the
             // fighter's arm instead; without one, the further off it is, the more it stays with the body.
+            ArmLookup = new Vector3?[pts.Length];
             foreach (var (region, a) in arm)
             {
                 string side = region == ArmLeft ? "l" : "r";
                 // only an arm already near the fighter's is moved onto it: lifting a low arm up to the
                 // shoulder bends it into a W that flaps about when running
                 float fittedY = (a.y - origin.Y) * scale * opt.Height + target.Y;
-                bool near = opt.Arms switch { "fighter" => true, "body" => false, _ => MathF.Abs(fittedY - a.fy) < 0.15f * fighterSize.Y };
+                // a fighter whose arms hang down in its bind pose (Ganondorf) has its arm's middle down at its
+                // waist, so a model's arm held out higher up (a T-pose) counts as near the fighter's shoulder too
+                float off = MathF.Abs(fittedY - a.fy);
+                if (fittedY > a.fy && opt.Roles != null && opt.Roles.TryGetValue(side + "sh", out int shoulder)
+                    && opt.Roles.TryGetValue(side + "ha", out int hand))
+                {
+                    var hang = skeleton.Position(hand) - skeleton.Position(shoulder);
+                    if (hang.Y < -0.5f * hang.Length())
+                        off = MathF.Min(off, MathF.Abs(fittedY - skeleton.Position(shoulder).Y));
+                }
+                bool near = opt.Arms switch { "fighter" => true, "body" => false, _ => off < 0.15f * fighterSize.Y };
                 if (opt.Conform && near && opt.Roles != null && opt.Roles.TryGetValue(side + "sh", out int sh) && opt.Roles.TryGetValue(side + "ha", out int ha))
                 {
                     var chain = new List<Vector3> { skeleton.Position(sh) };
@@ -623,8 +637,8 @@ namespace SkinTool
                     continue;
                 }
                 float fitted = (a.y - origin.Y) * scale * opt.Height + target.Y;
-                float off = MathF.Abs(fitted - a.fy) / MathF.Max(a.fTip - a.fRoot, 1e-4f);
-                LimbFollow[region] = Math.Clamp(1 - off, 0.2f, 1);
+                float apart = MathF.Abs(fitted - a.fy) / MathF.Max(a.fTip - a.fRoot, 1e-4f);
+                LimbFollow[region] = Math.Clamp(1 - apart, 0.2f, 1);
                 Report += $"{RegionNames[region]}: {fitted:F1} high next to the fighter's {a.fy:F1}, follows the arm bones {LimbFollow[region]:P0}\n";
             }
 
@@ -649,6 +663,8 @@ namespace SkinTool
                     float fside = fighterReach[Slice((l.Y - fighter.Min.Y) / fighterSize.Y)];
                     l.X = fcx + (q.X - cx) / side * fside;
                 }
+                else if (ArmLookup[i] is Vector3 onArm)
+                    l = onArm;
                 else if (arm.TryGetValue(region, out var a))
                 {
                     // along the arm from shoulder to tip, at the same share of the way on the fighter
@@ -721,6 +737,24 @@ namespace SkinTool
                 return chain[^1];
             }
 
+            // which way the fighter's arm runs at a share of the way along it
+            Vector3 Direction(float u)
+            {
+                float d = u * lengths[^1];
+                int k = 1;
+                while (k < chain.Count - 1 && d > lengths[k])
+                    k++;
+                var dir = chain[k] - chain[k - 1];
+                return dir.LengthSquared() > 1e-8f ? Vector3.Normalize(dir) : Vector3.UnitX * MathF.Sign(chain[^1].X - chain[0].X);
+            }
+
+            // an arm hanging down from the fighter's shoulder (Ganondorf's) starts where the model's arm
+            // leaves its body instead: a wide body's arm would otherwise run in over its shoulder to the
+            // fighter's and drop from there, a flat ledge sticking out of the body. Its weights still come
+            // from the fighter's own arm, where it hangs.
+            bool hangs = Direction(0).Y < -0.5f;
+            var shift = hangs ? middle[0] - chain[0] : Vector3.Zero;
+
             foreach (var i in members)
             {
                 float u = U(i);
@@ -729,7 +763,16 @@ namespace SkinTool
                 var mid = Vector3.Lerp(middle[b0], middle[b1], Math.Clamp(fb - b0, 0, 1));
                 var offset = Positions[i] - mid;
                 offset.X = 0; // the arm's length is the fighter's now; keep only its thickness
-                var moved = Along(u) + offset;
+                // the model's arm runs sideways; where the fighter's points down (Ganondorf's hang at his sides)
+                // the thickness turns with it, or the arm would be squashed flat along its own length
+                var across = new Vector3(MathF.Sign(Positions[i].X - cx), 0, 0);
+                var to = Direction(u);
+                var axis = Vector3.Cross(across, to);
+                if (hangs && axis.LengthSquared() > 1e-8f)
+                    offset = Vector3.Transform(offset, Quaternion.CreateFromAxisAngle(Vector3.Normalize(axis), MathF.Acos(Math.Clamp(Vector3.Dot(across, to), -1, 1))));
+                var moved = Along(u) + shift + offset;
+                if (hangs)
+                    ArmLookup[i] = Along(u) + offset;
                 float blend = SmoothStep(0, 0.35f, u);
                 Positions[i] = Vector3.Lerp(Positions[i], moved, blend);
             }

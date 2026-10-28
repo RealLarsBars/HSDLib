@@ -28,7 +28,9 @@ What `build` does, in the order the usual Blender + HSDRaw tutorial does it by h
    the model's body takes the fighter's body, its arms (whatever sticks out sideways) the arms, and
    anything under its crotch the legs. A model with stubby legs gets its feet on the fighter's feet
    and its body on the hips. Arms that sit far from the fighter's arms partly stay with the body, so
-   they don't get flung around the fighter's shoulders. Weights are smoothed over the surface, cut to
+   they don't get flung around the fighter's shoulders. Where the fighter's arms hang down in its bind pose
+   (Ganondorf), a model's arms held out in a T-pose are bent down to hang the same way, from where they
+   leave the model's body, and take their weights from the fighter's arms. Weights are smoothed over the surface, cut to
    3 per vertex and normalized. Small separate pieces (claws, teeth, whiskers) move as one piece with
    the body around them. Above the neck everything follows the head alone (see Head below).
 3. **Import**: one mesh per texture, CMP textures (RGB5A3 when they have transparency), triangle strips.
@@ -109,6 +111,9 @@ costume without building, to check its size and turn.
 
 Other commands:
 
+- `export <out.obj> <skin.dat> [--fighter Pl**.dat]`: writes a finished skin's model back out (OBJ, MTL and
+  textures, in its bind pose) to build it again with a newer skintool when the model it came from is gone.
+  With the fighter's data, its weapons go in their own OBJs beside it (`sword.obj`, for `--weapon`).
 - `check <original.dat> <skin.dat>`: same skeleton, flags and mesh count; weights valid.
 - `preview <out.png> <costume.dat>... [--anims Pl**.dat Pl**AJ.dat]`: renders each costume in test
   poses, or in the fighter's real animations when given its data and animation files.

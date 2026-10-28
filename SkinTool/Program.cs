@@ -22,6 +22,7 @@ skintool stretch <costume.dat> <Pl**.dat> <Pl**AJ.dat>
 skintool portrait <out.png> <costume.dat> <Pl**.dat> <Pl**AJ.dat> [--anim Wait1] [--at 0] [--yaw -30]
 skintool inspect <costume.dat>
 skintool check <original.dat> <skin.dat>
+skintool export <out.obj> <skin.dat> [--fighter <Pl**.dat>]
 skintool animelee <skin.dat|skins.zip|folder> --out <out.dat|out.zip|folder>
 skintool preview <out.png> <costume.dat> [<costume.dat> ...] [--anims <Pl**.dat> <Pl**AJ.dat> [--poses AttackAirB@0.25,...]] [--bones]
 skintool bonemap <costume.dat>
@@ -62,6 +63,7 @@ stretch  Poses a finished costume in the fighter's moves and warns about parts t
 inspect  Lists a costume's joints and meshes.
 check    Compares a finished skin with the original costume, as the build does.
 preview  Renders each costume in a few test poses, one row per costume.
+export   Writes a finished skin's model back out as an OBJ, to build it again.
          --anims uses the fighter's real animations; --bones colours the model by the bones it follows.
 bonemap  Shows where the fighter's bone map bones sit, to check the map.";
 
@@ -80,6 +82,7 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                     case "build": return Build(args.Skip(1).ToArray());
                     case "inspect": return Inspector.Run(args[1], args.Contains("--textures"));
                     case "preview": return Preview.Run(args);
+                    case "export": return Preview.Export(args);
                     case "slots": return Slots.Dump(args);
                     case "bonemap": return BoneMaps.Dump(args[1]);
                     case "check": return Check(args[1], args[2]);
