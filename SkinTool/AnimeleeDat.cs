@@ -146,23 +146,32 @@ namespace SkinTool
         static List<Corner> Shell(List<Corner[]> mesh, float thick, Vector2? black)
         {
             var shell = new List<Corner>();
-            if (black == null)
+            if (black == null || mesh.Count == 0)
                 return shell;
             // one push per place, so the shell stays closed across seams
-            var push = new Dictionary<(int, int, int), Vector3>();
+            var places = new Dictionary<(int, int, int), int>();
             (int, int, int) Key(Vector3 p) => ((int)MathF.Round(p.X / thick * 4), (int)MathF.Round(p.Y / thick * 4), (int)MathF.Round(p.Z / thick * 4));
-            foreach (var t in mesh)
-                foreach (var c in t)
-                    push[Key(c.Pos)] = push.GetValueOrDefault(Key(c.Pos)) + (c.Nrm.LengthSquared() > 0 ? Vector3.Normalize(c.Nrm) : Vector3.Zero);
-            Corner Out(Corner c)
+            int Place(Vector3 p) => places.TryGetValue(Key(p), out int i) ? i : places[Key(p)] = places.Count;
+            var ids = mesh.Select(t => (Place(t[0].Pos), Place(t[1].Pos), Place(t[2].Pos))).ToList();
+            var push = new Vector3[places.Count];
+            for (int i = 0; i < mesh.Count; i++)
+                foreach (var (c, id) in new[] { (mesh[i][0], ids[i].Item1), (mesh[i][1], ids[i].Item2), (mesh[i][2], ids[i].Item3) })
+                    push[id] += c.Nrm.LengthSquared() > 0 ? Vector3.Normalize(c.Nrm) : Vector3.Zero;
+            // thin parts (glasses frames) get a thinner outline, flat ones none
+            var limit = Animelee.PieceThickness(mesh.Select(t => (t[0].Pos, t[1].Pos, t[2].Pos)).ToList(), ids,
+                ids.Select(t => push[t.Item1] + push[t.Item2] + push[t.Item3]).ToList(), thick);
+            Corner Out(Corner c, int id, float t)
             {
-                var n = push[Key(c.Pos)];
+                var n = push[id];
                 n = n.LengthSquared() > 1e-12f ? Vector3.Normalize(n) : Vector3.Zero;
-                return new Corner { Pos = c.Pos + n * thick, Nrm = -n, Bones = c.Bones, Weights = c.Weights, UV = black.Value };
+                return new Corner { Pos = c.Pos + n * t, Nrm = -n, Bones = c.Bones, Weights = c.Weights, UV = black.Value };
             }
-            foreach (var t in mesh)
+            for (int i = 0; i < mesh.Count; i++)
             {
-                var a = Out(t[0]); var b = Out(t[1]); var c = Out(t[2]);
+                if (limit[i] <= 0)
+                    continue;
+                var t = mesh[i];
+                var a = Out(t[0], ids[i].Item1, limit[i]); var b = Out(t[1], ids[i].Item2, limit[i]); var c = Out(t[2], ids[i].Item3, limit[i]);
                 // wound against the way the mesh faces there
                 bool outwards = Vector3.Dot(Vector3.Cross(b.Pos - a.Pos, c.Pos - a.Pos), -(a.Nrm + b.Nrm + c.Nrm)) > 0;
                 shell.AddRange(outwards ? new[] { a, c, b } : new[] { a, b, c });
