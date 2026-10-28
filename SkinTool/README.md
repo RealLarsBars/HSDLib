@@ -117,6 +117,22 @@ Other commands:
 - `inspect <costume.dat>`, `slots <Pl**.dat>`: list joints, meshes and visibility tables.
 - `preview ... --slots 55,56` draws only those mesh slots, to see what a slot holds.
 
+## Legs pressed together
+
+A model whose legs touch all the way up (Peach's overalls in Super Mario Odyssey) never shows a gap between
+them, but its lower body is a slim column (under 12% of its height to each side) where a blob on feet is wide
+right down to them. Its legs then run three quarters of the way up that column. They aren't smoothed into each
+other, and below the knees the triangles joining one leg to the other are left out, so a stride doesn't pull
+them into a sheet.
+
+## Leftover layers and closed eyes
+
+A small part with a plain grey texture lying on another part (the shadow over Peach's eyes) is blended in
+by the game it came from; drawn solid it covers what's under it, so it's left out. Super Mario Odyssey rips
+come with the face's eyes in one expression (Peach's shut in a smile) and each expression's eye area in its
+own file: when `Name_LEye.SMD` and `Name_REye.SMD` sit next to the model, their open eye areas are stitched
+into the face in place of its own, and the eyelashes of the other expressions are left out.
+
 ## Pieces that touch
 
 A model made of separate pieces (a shirt with the arms as their own meshes, legs inside a pair of shorts)

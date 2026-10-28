@@ -121,6 +121,8 @@ namespace SkinTool
         // (NaN when it has real legs)
         // the fighter's hip joints, where its legs start under a dress
         private float LegTopY = float.NaN;
+        // the model's legs are pressed together all the way up (see LegsTogether)
+        private bool LegsPressed;
         private float HipY = float.NaN, FloorY, MiddleX, HalfWidth, MiddleZ, HalfDepth;
 
         private int[] BoneRegion;
@@ -144,6 +146,8 @@ namespace SkinTool
             rig.FighterRegions(fighter, skeleton, head, opt.Roles);
             rig.Fit(model, fighter, skeleton, opt);
             rig.Transfer(model, fighter, opt);
+            if (rig.LegsPressed)
+                rig.Report += $"left out {rig.UnjoinLegs(model)} triangles joining the two lower legs, which would stretch into a sheet in a stride\n";
             return rig;
         }
 
@@ -236,6 +240,18 @@ namespace SkinTool
             // shins: its feet follow the fighter's feet and its body starts at the hips.
             float lowerTop = fighterCrotch;
             int[] legSide = null;
+            // legs pressed together (Peach's overalls) touch all the way up, so they never part; but they
+            // make a slim column under the body, where a blob on feet (Monty) is wide right down to them
+            if (opt.Legs == "auto" && modelCrotch < fighterCrotch * 0.5f)
+            {
+                float together = LegsTogether(pts, (min.X + max.X) / 2, min.Y, size.Y);
+                if (together > 0)
+                {
+                    LegsPressed = true;
+                    modelCrotch = together;
+                    Report += $"legs pressed together: the model's legs run up to {together:P0} of its height\n";
+                }
+            }
             bool stubby = opt.Legs switch { "separate" => false, "body" or "cut" => true, _ => modelCrotch < fighterCrotch * 0.5f };
             // a long dress hides where the fighter's legs part (Zelda, Peach): its legs run up to the hip
             // joints under the dress. The model's legs are whatever is below those joints once it stands in
@@ -767,6 +783,55 @@ namespace SkinTool
             return Math.Clamp(top / (float)slices, 0.05f, 0.6f);
         }
 
+        /// <summary>
+        /// Legs pressed together are one surface where they touch. Below the knees, where a stride parts
+        /// them furthest, the triangles reaching from one leg to the other go: they're hidden between the
+        /// legs while they touch, and once parted the legs are whole without them.
+        /// </summary>
+        private int UnjoinLegs(ObjModel model)
+        {
+            var legs = Enumerable.Range(0, Positions.Length).Where(i => ModelRegion[i] == LegLeft || ModelRegion[i] == LegRight).ToList();
+            if (legs.Count == 0)
+                return 0;
+            float floor = legs.Min(i => Positions[i].Y), top = legs.Max(i => Positions[i].Y);
+            float knee = floor + (top - floor) * 0.5f;
+            bool Low(int i) => Positions[i].Y < knee;
+            return model.Triangles.RemoveAll(t =>
+            {
+                var c = new[] { t.A.Position, t.B.Position, t.C.Position };
+                return c.All(Low) && c.Any(i => ModelRegion[i] == LegLeft) && c.Any(i => ModelRegion[i] == LegRight);
+            });
+        }
+
+        /// <summary>
+        /// For a model whose legs never part: how far up its slim lower body runs before it widens into the
+        /// hips, as a share of its height, a quarter below where it widens; 0 when the lower body isn't slim.
+        /// </summary>
+        private static float LegsTogether(Vector3[] pts, float centerX, float minY, float height)
+        {
+            const int slices = 50;
+            var reach = new float[slices];
+            var any = new bool[slices];
+            foreach (var p in pts)
+            {
+                int s = Math.Clamp((int)((p.Y - minY) / height * slices), 0, slices - 1);
+                reach[s] = MathF.Max(reach[s], MathF.Abs(p.X - centerX));
+                any[s] = true;
+            }
+            // both legs together are about a quarter of the height across (a slice may hold nothing at all)
+            int top = 0;
+            for (int s = 0; s < slices; s++)
+            {
+                if (!any[s])
+                    continue;
+                if (reach[s] > height * 0.12f)
+                    break;
+                top = s + 1;
+            }
+            float slim = top / (float)slices;
+            return slim >= 0.3f ? MathF.Min(slim * 0.75f, 0.6f) : 0;
+        }
+
         private void Transfer(ObjModel model, FighterMesh fighter, Options opt)
         {
             int n = Positions.Length;
@@ -895,7 +960,14 @@ namespace SkinTool
             // 2. smooth the body across its surface so joints bend instead of tearing, then smooth the
             // body region on its own some more: a different shape bending at the fighter's exact joints
             // (waist, neck) folds like paper, a gradual blend bends like a body
-            Smooth(w, adj, boneCount, opt.SmoothPasses, i => !Foot(i));
+            // legs pressed together (Peach's overalls and boots) are one surface down the middle; smoothing
+            // across it would blend the two legs into each other, and a stride pulls the back boot out into
+            // a sheet towards the front one
+            bool Leg(int i, int side) => ModelRegion[i] == side;
+            var sides = !LegsPressed ? adj : adj.Select((near, i) => Leg(i, LegLeft) || Leg(i, LegRight)
+                ? near.Where(j => !(Leg(i, LegLeft) && Leg(j, LegRight) || Leg(i, LegRight) && Leg(j, LegLeft))).ToHashSet()
+                : near).ToArray();
+            Smooth(w, sides, boneCount, opt.SmoothPasses, i => !Foot(i));
             Smooth(w, adj, boneCount, opt.BodySmoothPasses, i => ModelRegion[i] == Body);
 
             // 2b. above the neck everything follows the head alone, blending in over a short band

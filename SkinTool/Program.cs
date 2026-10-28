@@ -464,6 +464,10 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
             int holes = obj.CloseSmallHoles();
             if (holes > 0)
                 Console.WriteLine($"closed {holes} small openings (open claw or tooth bases)");
+            foreach (var note in obj.Notes)
+                Console.WriteLine(note);
+            foreach (var layer in ShadeLayers.Remove(obj))
+                Console.WriteLine($"left out {layer}: a grey shading layer over another part, which would cover it");
             Console.WriteLine($"model: {obj.Positions.Count} vertices, {obj.Triangles.Count} triangles, {obj.Textures.Count} materials");
 
             // fit and weight once against the first costume; every costume shares the skeleton

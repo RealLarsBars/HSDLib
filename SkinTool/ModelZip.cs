@@ -43,9 +43,13 @@ namespace SkinTool
             return models[0];
         }
 
-        /// <summary>Every model in a folder, in a fixed order.</summary>
+        /// <summary>
+        /// Every model in a folder, in a fixed order; not the eye areas a Super Mario Odyssey rip carries for
+        /// each expression (Name_LEyeClose.SMD and so on), which are pieces of a face (see <see cref="EyeSwap"/>).
+        /// </summary>
         public static List<string> ModelsIn(string folder) =>
             Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories).Where(ModelImport.IsModel)
+                .Where(m => !System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileNameWithoutExtension(m), "_[LR]Eye[A-Za-z]*$"))
                 .OrderBy(m => m, StringComparer.OrdinalIgnoreCase).ToList();
 
         /// <summary>Unpacks the zip into <paramref name="folder"/>.</summary>

@@ -39,9 +39,14 @@ namespace SkinTool
 
         public string Directory;
 
+        // what loading changed about the model, for the build report
+        public readonly List<string> Notes = new();
+
         public static ObjModel Load(string path)
         {
             var model = path.EndsWith(".obj", StringComparison.OrdinalIgnoreCase) ? LoadObj(path) : ModelImport.Load(path);
+            if (EyeSwap.Apply(model, path) is string swapped)
+                model.Notes.Add(swapped);
             Outlines.Mark(model);
             return model;
         }
