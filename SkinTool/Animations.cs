@@ -31,9 +31,20 @@ namespace SkinTool
         // moves where a fighter gets low, for keeping a skin out of the floor
         public static readonly (string Name, float At)[] FloorPoses = new[]
         {
-            "Wait1", "Walk", "Dash", "Run", "Turn", "Squat", "SquatWait", "SquatRv", "Landing", "Guard", "Catch",
+            "Wait1", "Wait", "Walk", "WalkMiddle", "Dash", "Run", "Turn", "Squat", "SquatWait", "SquatRv", "Landing", "Guard", "Catch",
             "AttackLw3", "AttackLw4", "AttackHi3", "AttackS4", "Escape",
         }.SelectMany(n => new[] { (n, 0f), (n, 0.5f) }).ToArray();
+
+        /// <summary>Every move in the fighter's action table, at a few points through each.</summary>
+        public static (string Name, float At)[] AllPoses(string fighterDat, params float[] at)
+        {
+            var fighter = new HSDRawFile(fighterDat);
+            var data = fighter.Roots.Select(r => r.Data).OfType<SBM_FighterData>().FirstOrDefault()
+                ?? new SBM_FighterData() { _s = fighter.Roots[0].Data._s };
+            return data.FighterActionTable.Commands.Where(a => a.Name != null && a.AnimationSize > 0)
+                .Select(a => a.Name.Split('_')).Where(p => p.Length >= 3).Select(p => p[^2]).Distinct()
+                .SelectMany(n => at.Select(t => (n, t))).ToArray();
+        }
 
         public static List<Preview.Pose> Load(string fighterDat, string animDat, (string Name, float At)[] wanted)
         {

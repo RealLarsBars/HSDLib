@@ -541,6 +541,9 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
             var poses = Animations.Load(args[2], args[3], Animations.TestPoses);
             var warning = Preview.StretchCheck(args[1], Slots.Load(args[2]), poses);
             Console.WriteLine(warning != null ? $"warning: {warning}" : "no bad stretching");
+            var all = Animations.Load(args[2], args[3], Animations.AllPoses(args[2], 0, 0.25f, 0.5f, 0.75f));
+            var (share, pose, bone) = Preview.ThinCheck(args[1], Slots.Load(args[2]), all);
+            Console.WriteLine(FormattableString.Invariant($"thin check: {share:P1} of the skin's points squashed to under {Preview.ThinLimit:0%} of their depth in some of {all.Count} poses") + (pose != null ? $" (most in {pose}, mostly on bone {bone})" : ""));
             return 0;
         }
 
@@ -624,7 +627,8 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
             {
                 var poses = Animations.Load(fighterDat, animDat, Animations.FloorPoses);
                 var lowest = Preview.FloorDepth(dats[0], fighterData, poses);
-                rig.FloorGuard(fighter, skeleton, poses, lowest.Select(l => l.Low).ToList(), fighter.SkinBones.Concat(rig.Weights.SelectMany(w => w.Select(e => e.Bone))).ToHashSet());
+                var moves = Animations.Load(fighterDat, animDat, Animations.AllPoses(fighterDat, 0, 0.5f));
+                rig.FloorGuard(fighter, skeleton, poses, lowest.Select(l => l.Low).ToList(), fighter.SkinBones.Concat(rig.Weights.SelectMany(w => w.Select(e => e.Bone))).ToHashSet(), moves);
             }
             Console.Write(rig.Report);
             if (overlayPng != null)
