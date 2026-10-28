@@ -12,8 +12,8 @@ namespace SkinTool
     {
         const string Usage =
 @"skintool build --model <model.obj/.fbx/.dae|model.zip> --dat <costume.dat> [--dat <costume.dat> ...] --out <folder|out.zip>
-               [--fighter <Pl**.dat>] [--bones 41,22,...] [--scale 1.0] [--width 1.0] [--height 1.0] [--rotate 0 | x,y,z] [--textures <costume.dat>=<folder> ...]
-               [--legs auto|separate|body|cut] [--arms auto|fighter|body] [--neck auto|none|0.6] [--tail yes|no] [--attach yes|no] [--leg-band 0.3] [--keep-shape]
+               [--fighter <Pl**.dat>] [--bones 41,22,...] [--scale 1.0] [--width 1.0] [--height 1.0] [--rotate 0 | x,y,z] [--move forward[,up]] [--textures <costume.dat>=<folder> ...]
+               [--legs auto|separate|body|cut] [--arms auto|fighter|body] [--neck auto|none|0.6] [--tail yes|no] [--attach yes|no] [--style normal|animelee] [--leg-band 0.3] [--keep-shape]
                [--pick <model in the zip or folder>] [--weapon <name>=<model|zip> [--weapon-pick <name>=<model>] [--weapon-flip <name>] ...]
                [--preview <out.png> [--anims <Pl**AJ.dat>]] [--overlay <out.png> [--fit-only]] [--portraits <folder>]
 skintool models <zip|folder> --out <folder>
@@ -32,6 +32,9 @@ build    Swaps the model into every costume given, keeping each costume's skelet
          --textures swaps in PNGs from another folder for one costume (matched by file name).
          A .zip model (OBJ, MTL and textures) is unpacked first; an --out ending in .zip collects the costumes in one zip.
          --width and --height stretch the fitted model sideways or upwards only (1 = as fitted).
+         --move slides the fitted model forward (or back, negative) and up or down, as shares of the
+         fighter's height (--move -0.1 puts it a tenth of the fighter's height further back). It never
+         goes up off the floor.
          --legs says how the model's legs work: separate legs, a body that works as legs (the bottom
          bends with the fighter's legs), or a bottom cut into two legs; auto picks from its shape.
          --arms fighter always moves its arms onto the fighter's, body keeps them mostly with the body.
@@ -41,6 +44,7 @@ build    Swaps the model into every costume given, keeping each costume's skelet
          (Fox, Falco, Pikachu, Pichu, Mewtwo, Yoshi); without it, everything behind follows the body.
          --attach (yes by default) keeps separate pieces that touch (a sleeve on a shirt) joined in every
          pose; no lets loose pieces swing on their own.
+         --style animelee gives the skin the Animelee look: a black outline, flat lighting and flat colours.
          The same rules can come with the model in a skin.txt next to the OBJ (""legs = body"").
          --overlay draws the fitted model over the first costume, to check its size; with --fit-only
          that's all it does (no costumes are written, --out isn't needed).
@@ -146,6 +150,16 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                 throw new Exception($"rotate takes one angle or x,y,z, not {value}");
         }
 
+        // forward[,up], shares of the fighter's height
+        static void Move(AutoRig.Options opt, string value)
+        {
+            var parts = value.Split(',').Select(v => float.Parse(v.Trim(), CultureInfo.InvariantCulture)).ToArray();
+            if (parts.Length < 1 || parts.Length > 2 || parts.Any(v => MathF.Abs(v) > 0.5f))
+                throw new Exception($"move takes forward or forward,up, each between -0.5 and 0.5, not {value}");
+            opt.Forward = parts[0];
+            opt.Up = parts.Length > 1 ? parts[1] : 0;
+        }
+
         // where the head starts: auto (find the neck), none, or a share of the model's height (0.2 to 0.95)
         static float Neck(string value)
         {
@@ -164,7 +178,7 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
 
         /// <summary>
         /// Rules that come with a model, in a skin.txt next to its OBJ, one "name = value" per line:
-        /// legs, arms, neck, scale, rotate, leg-band. Options given on the command line win.
+        /// legs, arms, neck, style, scale, rotate, move, leg-band. Options given on the command line win.
         /// </summary>
         static void ReadRules(string model, AutoRig.Options opt, HashSet<string> given)
         {
@@ -190,11 +204,13 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                     case "width": opt.Width = Stretch(name, value); break;
                     case "height": opt.Height = Stretch(name, value); break;
                     case "rotate": Rotate(opt, value); break;
+                    case "move": Move(opt, value); break;
+                    case "style": opt.Style = Rule(name, value, "normal", "animelee"); break;
                     case "leg-band": opt.LegBand = float.Parse(value, CultureInfo.InvariantCulture); break;
                     case "neck": opt.Neck = Neck(value); break;
                     case "tail": opt.HasTail = YesNo("tail", value); break;
                     case "attach": opt.Attach = YesNo("attach", value); break;
-                    default: throw new Exception($"skin.txt: unknown rule {name} (legs, arms, neck, tail, attach, scale, width, height, rotate, leg-band)");
+                    default: throw new Exception($"skin.txt: unknown rule {name} (legs, arms, neck, tail, attach, style, scale, width, height, rotate, move, leg-band)");
                 }
                 Console.WriteLine($"rule from skin.txt: {name} = {value}");
             }
@@ -305,6 +321,8 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                     case "--width": opt.Width = Stretch("width", Next()); break;
                     case "--height": opt.Height = Stretch("height", Next()); break;
                     case "--rotate": Rotate(opt, Next()); break;
+                    case "--move": Move(opt, Next()); break;
+                    case "--style": opt.Style = Rule("style", Next(), "normal", "animelee"); break;
                     case "--pick": pick = Next(); break;
                     case "--overlay": overlayPng = Next(); break;
                     case "--fit-only": fitOnly = true; break;
@@ -464,6 +482,13 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
             int holes = obj.CloseSmallHoles();
             if (holes > 0)
                 Console.WriteLine($"closed {holes} small openings (open claw or tooth bases)");
+            foreach (var note in obj.Notes)
+                Console.WriteLine(note);
+            foreach (var layer in ShadeLayers.Remove(obj))
+                Console.WriteLine($"left out {layer}: a grey shading layer over another part, which would cover it");
+            if (opt.Style == "animelee")
+                Console.WriteLine(Animelee.AddOutline(obj) ? "animelee: black outline added, flat lighting and colours"
+                    : "animelee: flat lighting and colours (the model has its own outline)");
             Console.WriteLine($"model: {obj.Positions.Count} vertices, {obj.Triangles.Count} triangles, {obj.Textures.Count} materials");
 
             // fit and weight once against the first costume; every costume shares the skeleton
@@ -522,7 +547,7 @@ bonemap  Shows where the fighter's bone map bones sit, to check the map.";
                     costumeModel = obj.WithTextureFolder(folder);
 
                 var before = Validator.Snapshot(root);
-                var builder = new SkinBuilder(file, sk) { FighterData = fighterData };
+                var builder = new SkinBuilder(file, sk) { FighterData = fighterData, Flat = opt.Style == "animelee" };
                 if (fighterData != null)
                 {
                     var code = BoneMaps.Code(dat);

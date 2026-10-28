@@ -16,7 +16,9 @@ What `build` does, in the order the usual Blender + HSDRaw tutorial does it by h
 1. **Fit**: scales the model to sit on the fighter's skeleton (between "as tall as the fighter" and
    "as wide as its arm span", but never wider than the arm span; `--scale` adjusts it, `--rotate`
    turns a model that faces the wrong way; `--rotate x,y,z` also stands up one that lies down or is
-   upside down, in degrees about each axis).
+   upside down, in degrees about each axis; `--move forward,up` slides the weighted model forward or
+   back and down, as shares of the fighter's height, for a model that sits too far forward, like Spyro
+   with his long neck; it never goes up off the floor).
 2. **Weights** (the Data Transfer step): copies weights from the fighter's own mesh, onto the bones
    modders weight custom skins to (the fighter's bone map in `BoneMaps.cs`: face, body, shoulders,
    elbows, hands, legs, knees and feet). Where a mapped limb bone isn't one the costume's own model
@@ -116,6 +118,31 @@ Other commands:
 - `preview ... --anims <Pl.dat> <PlAJ.dat> --poses AttackAirB@0.25,AttackAirF@0.3`: draws chosen moves.
 - `inspect <costume.dat>`, `slots <Pl**.dat>`: list joints, meshes and visibility tables.
 - `preview ... --slots 55,56` draws only those mesh slots, to see what a slot holds.
+
+## Legs pressed together
+
+A model whose legs touch all the way up (Peach's overalls in Super Mario Odyssey) never shows a gap between
+them, but its lower body is a slim column (under 12% of its height to each side) where a blob on feet is wide
+right down to them. Its legs then run three quarters of the way up that column. They aren't smoothed into each
+other, and below the knees the triangles joining one leg to the other are left out, so a stride doesn't pull
+them into a sheet.
+
+## Animelee style
+
+`--style animelee` (or `style = animelee` in skin.txt) gives a skin the cel-shaded Animelee look. A black
+outline is added: a copy of the model pushed out a little along its normals, with its faces wound inward,
+drawn from one side only so just its rim shows. Its points move with the nearest model point. The
+materials are drawn without the stage's lighting, and the textures' colours are flattened into a few
+bands. Cut-out parts (lashes, hair cards) get no outline, and a model with its own outline keeps it.
+The outline doubles the triangle count.
+
+## Leftover layers and closed eyes
+
+A small part with a plain grey texture lying on another part (the shadow over Peach's eyes) is blended in
+by the game it came from; drawn solid it covers what's under it, so it's left out. Super Mario Odyssey rips
+come with the face's eyes in one expression (Peach's shut in a smile) and each expression's eye area in its
+own file: when `Name_LEye.SMD` and `Name_REye.SMD` sit next to the model, their open eye areas are stitched
+into the face in place of its own, and the eyelashes of the other expressions are left out.
 
 ## Pieces that touch
 
