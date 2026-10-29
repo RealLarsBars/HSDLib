@@ -519,7 +519,7 @@ namespace SkinTool
             var stretch = fighterSize / size;
             var modelTris = shapeTris.Select(t => (t.A.Position, t.B.Position, t.C.Position));
             var fighterTris = Enumerable.Range(0, fighter.Triangles.Count / 3).Select(t => (3 * t, 3 * t + 1, 3 * t + 2));
-            float modelCrotch = Crotch(pts, modelTris, (min.X + max.X) / 2, min.Y, size.Y);
+            float modelCrotch = Crotch(pts, modelTris, (min.X + max.X) / 2, min.Y, size.Y, edges: true);
             // clothes worn over the legs (a coat, apron or dress hanging across between them)
             var clothes = Clothes.Find(pts, shapeTris.Select(t => (t.A.Position, t.B.Position, t.C.Position)).ToList(), min, size,
                 tris => Crotch(pts, tris, (min.X + max.X) / 2, min.Y, size.Y));
@@ -688,6 +688,13 @@ namespace SkinTool
             {
                 int headTop = Enumerable.Range(0, slices).Last(s => pointReach[s] > 0);
                 int headFrom = Math.Min(Math.Max(Slice(neck), slices * 3 / 4), headTop);
+                // arms held out right at the line (Moe's, a hunched head sitting low between his shoulders)
+                // aren't the head: it starts above them, unless that wide stretch runs up to the top (a big head)
+                int wideTo = headFrom;
+                while (wideTo < headTop && pointReach[wideTo] > typical * 1.35f)
+                    wideTo++;
+                if (wideTo > headFrom && wideTo < headTop - slices / 10)
+                    headFrom = wideTo;
                 armsPast = Enumerable.Range(headFrom, headTop - headFrom + 1).Max(s => pointReach[s]) * 1.5f;
             }
             int neckSlice = neck > 0 ? Slice(neck) : slices;
@@ -1345,7 +1352,7 @@ namespace SkinTool
         /// How far up (as a share of the height) the shape stays split into two legs: heights where
         /// there is surface on both sides but no edge crosses the middle.
         /// </summary>
-        private static float Crotch(Vector3[] pts, IEnumerable<(int, int, int)> triangles, float centerX, float minY, float height)
+        private static float Crotch(Vector3[] pts, IEnumerable<(int, int, int)> triangles, float centerX, float minY, float height, bool edges = false)
         {
             const int slices = 50;
             int Slice(float y) => Math.Clamp((int)((y - minY) / height * slices), 0, slices - 1);
@@ -1358,6 +1365,21 @@ namespace SkinTool
                 if (p.X < centerX) left[Slice(p.Y)]++;
                 else right[Slice(p.Y)]++;
             }
+            // a low-poly leg (Moe's) has heights with no point on them, which read as the legs ending: its
+            // edges count at every height they pass too (only for the model's own legs, not when looking for
+            // clothes over them: Cartman's stubs under his jacket aren't legs under a coat)
+            foreach (var (a, b, c) in edges ? triangles : Enumerable.Empty<(int, int, int)>())
+                foreach (var (u, v) in new[] { (a, b), (b, c), (c, a) })
+                {
+                    int from = Slice(pts[u].Y), to = Slice(pts[v].Y);
+                    for (int s = Math.Min(from, to) + 1; s < Math.Max(from, to); s++)
+                    {
+                        float y = minY + (s + 0.5f) / slices * height;
+                        float k = Math.Clamp((y - pts[u].Y) / (pts[v].Y - pts[u].Y), 0, 1);
+                        if (pts[u].X + (pts[v].X - pts[u].X) * k < centerX) left[s]++;
+                        else right[s]++;
+                    }
+                }
             // a triangle that reaches across the middle joins the two sides at the heights where it crosses
             // the middle (only there: a long low-poly triangle down the inside of a pair of shorts crosses at
             // the crotch, not at the hem); so does an edge lying on the middle, the seam of a mirrored model
