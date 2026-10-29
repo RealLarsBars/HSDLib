@@ -51,6 +51,28 @@ namespace SkinTool
             return model;
         }
 
+        /// <summary>Drops the positions no triangle uses any more, after parts were left out.</summary>
+        public void DropUnusedPositions()
+        {
+            var map = new int[Positions.Count];
+            Array.Fill(map, -1);
+            var kept = new List<Vector3>();
+            foreach (var t in Triangles)
+                foreach (var c in new[] { t.A, t.B, t.C })
+                {
+                    if (map[c.Position] < 0)
+                    {
+                        map[c.Position] = kept.Count;
+                        kept.Add(Positions[c.Position]);
+                    }
+                }
+            // a corner object can be shared by triangles: move each one once
+            foreach (var c in Triangles.SelectMany(t => new[] { t.A, t.B, t.C }).Distinct())
+                c.Position = map[c.Position];
+            Positions.Clear();
+            Positions.AddRange(kept);
+        }
+
         private static ObjModel LoadObj(string path)
         {
 
