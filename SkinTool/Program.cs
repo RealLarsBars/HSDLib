@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 
 namespace SkinTool
 {
@@ -521,39 +522,64 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
                 ReadRules(model, opt, args.Where(a => a.StartsWith("--")).ToHashSet());
                 BuildCostumes(model, dats, outDir, fighterDat, textureFolders, opt, uploads, overlayPng, fitOnly, animDat);
 
-                if (previewPng != null && !fitOnly)
+                // the preview, the stretch check and the portraits only read the costumes, so they're drawn
+                // side by side; what they say prints in the same order as before
+                var said = new List<string>();
+                var drawPreview = Task.Run(() =>
                 {
+                    if (previewPng == null || fitOnly)
+                        return;
                     var previewArgs = new List<string> { "preview", previewPng, Path.Combine(outDir, Path.GetFileName(dats[0])) };
                     if (animDat != null && fighterDat != null)
                         previewArgs.AddRange(new[] { "--anims", fighterDat, animDat });
                     if (fighterDat != null)
                         previewArgs.AddRange(new[] { "--fighter", fighterDat });
-                    Preview.Run(previewArgs.ToArray());
-                }
+                    Preview.Run(previewArgs.ToArray(), said.Add);
+                });
 
                 // pose the skin in the fighter's moves and warn about parts that tear or smear
-                if (animDat != null && fighterDat != null && !fitOnly)
+                var stretchSaid = new List<string>();
+                var checkStretch = Task.Run(() =>
                 {
+                    if (animDat == null || fighterDat == null || fitOnly)
+                        return null;
                     var poses = Animations.Load(fighterDat, animDat, Animations.TestPoses);
-                    var warning = Preview.StretchCheck(Path.Combine(outDir, Path.GetFileName(dats[0])), Slots.Load(fighterDat), poses);
-                    if (warning != null)
-                        Console.WriteLine($"warning: {warning}");
-                }
+                    return Preview.StretchCheck(Path.Combine(outDir, Path.GetFileName(dats[0])), Slots.Load(fighterDat), poses, stretchSaid.Add);
+                });
 
                 // a character select portrait of each costume, next to it (PlFxNr_csp.png) and in --portraits
-                if (portraitDir != null && animDat != null && fighterDat != null && !fitOnly)
+                var portraits = new List<string>();
+                try
                 {
-                    Directory.CreateDirectory(portraitDir);
-                    var pose = PortraitPose(fighterDat, animDat);
-                    var data = Slots.Load(fighterDat);
-                    foreach (var dat in dats)
+                    if (portraitDir != null && animDat != null && fighterDat != null && !fitOnly)
                     {
-                        var name = Path.GetFileNameWithoutExtension(dat) + "_csp.png";
-                        Preview.Portrait(Path.Combine(outDir, Path.GetFileName(dat)), data, pose, Path.Combine(portraitDir, name));
-                        File.Copy(Path.Combine(portraitDir, name), Path.Combine(outDir, name), true);
-                        Console.WriteLine($"portrait {name}");
+                        Directory.CreateDirectory(portraitDir);
+                        var pose = PortraitPose(fighterDat, animDat);
+                        var data = Slots.Load(fighterDat);
+                        portraits = dats.Select(dat => Path.GetFileNameWithoutExtension(dat) + "_csp.png").ToList();
+                        Each(dats.Count, i =>
+                        {
+                            Preview.Portrait(Path.Combine(outDir, Path.GetFileName(dats[i])), data, pose, Path.Combine(portraitDir, portraits[i]));
+                            File.Copy(Path.Combine(portraitDir, portraits[i]), Path.Combine(outDir, portraits[i]), true);
+                        });
                     }
                 }
+                finally
+                {
+                    // the scratch folder goes once this returns, so let the others finish first (their own errors come below)
+                    try { Task.WaitAll(drawPreview, checkStretch); } catch (AggregateException) { }
+                }
+
+                drawPreview.GetAwaiter().GetResult();
+                foreach (var line in said)
+                    Console.WriteLine(line);
+                var warning = checkStretch.GetAwaiter().GetResult();
+                foreach (var line in stretchSaid)
+                    Console.WriteLine(line);
+                if (warning != null)
+                    Console.WriteLine($"warning: {warning}");
+                foreach (var name in portraits)
+                    Console.WriteLine($"portrait {name}");
 
                 if (zipOut != null && !fitOnly)
                 {
@@ -661,9 +687,10 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
                 }
             }
             var rig = AutoRig.Run(obj, fighter, skeleton, opt);
-            // the fighter's moves, to keep the skin out of the floor in its low ones
+            // the fighter's moves, to keep the skin out of the floor in its low ones. Only the weights
+            // change, so the size check (which draws the bind pose) leaves it out
             animDat ??= fighterDat != null ? Path.Combine(Path.GetDirectoryName(Path.GetFullPath(fighterDat)), Path.GetFileNameWithoutExtension(fighterDat) + "AJ.dat") : null;
-            if (fighterData != null && File.Exists(animDat))
+            if (fighterData != null && File.Exists(animDat) && !fitOnly)
             {
                 var poses = Animations.Load(fighterDat, animDat, Animations.FloorPoses);
                 var lowest = Preview.FloorDepth(dats[0], fighterData, poses);
@@ -676,47 +703,70 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
             if (fitOnly)
                 return;
 
-            foreach (var dat in dats)
+            // the costumes only read the fit, so they're built side by side; what each says prints in order
+            var said = new List<string>[dats.Count];
+            Each(dats.Count, c => said[c] = BuildCostume(dats[c], dats[0], first, skeleton, rig, obj, outDir, fighterData, textureFolders, opt, uploads));
+            foreach (var line in said.SelectMany(l => l))
+                Console.WriteLine(line);
+        }
+
+        /// <summary>Runs body(0..count-1) side by side; a failure throws the first one's own error, as a plain loop would.</summary>
+        static void Each(int count, Action<int> body)
+        {
+            var failed = new Exception[count];
+            Parallel.For(0, count, i =>
             {
-                var file = dat == dats[0] ? first : new HSDRawFile(dat);
-                var root = (HSD_JOBJ)file.Roots[0].Data;
-                var sk = dat == dats[0] ? skeleton : new Skeleton(root);
+                try { body(i); }
+                catch (Exception e) { failed[i] = e; }
+            });
+            var first = failed.FirstOrDefault(e => e != null);
+            if (first != null)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(first);
+        }
 
-                if (!Validator.SameStructure(skeleton, sk))
-                    throw new Exception($"{Path.GetFileName(dat)} has a different skeleton from {Path.GetFileName(dats[0])}; give each character its own run");
+        /// <summary>Puts the fitted model into one costume and saves it; returns what to print about it.</summary>
+        static List<string> BuildCostume(string dat, string firstDat, HSDRawFile first, Skeleton skeleton, AutoRig rig, ObjModel obj, string outDir, HSDRaw.Melee.Pl.SBM_FighterData fighterData, Dictionary<string, string> textureFolders, AutoRig.Options opt, Dictionary<string, Weapons.Upload> uploads)
+        {
+            var file = dat == firstDat ? first : new HSDRawFile(dat);
+            var root = (HSD_JOBJ)file.Roots[0].Data;
+            var sk = dat == firstDat ? skeleton : new Skeleton(root);
 
-                // some costumes pose a few bones slightly differently (a longer arm, a bigger hat):
-                // move each vertex with its bones so it sits on this costume's skeleton the same way
-                var positions = rig.Positions;
-                var normals = rig.Normals;
-                if (!Validator.SameSkeleton(skeleton, sk))
-                    (positions, normals) = Retarget(skeleton, sk, rig, obj);
+            if (!Validator.SameStructure(skeleton, sk))
+                throw new Exception($"{Path.GetFileName(dat)} has a different skeleton from {Path.GetFileName(firstDat)}; give each character its own run");
 
-                var costumeModel = obj;
-                if (textureFolders.TryGetValue(Path.GetFileName(dat), out var folder))
-                    costumeModel = obj.WithTextureFolder(folder);
+            // some costumes pose a few bones slightly differently (a longer arm, a bigger hat):
+            // move each vertex with its bones so it sits on this costume's skeleton the same way
+            var positions = rig.Positions;
+            var normals = rig.Normals;
+            if (!Validator.SameSkeleton(skeleton, sk))
+                (positions, normals) = Retarget(skeleton, sk, rig, obj);
 
-                var before = Validator.Snapshot(root);
-                var builder = new SkinBuilder(file, sk) { FighterData = fighterData, Flat = opt.Style == "animelee" };
-                if (fighterData != null)
-                {
-                    var code = BoneMaps.Code(dat);
-                    builder.WeaponSlots = Weapons.AllSlots(fighterData, code);
-                    builder.WeaponParts = Weapons.Build(root, sk, fighterData, code, uploads);
-                }
-                builder.Replace(costumeModel, positions, normals, rig.Weights);
+            var costumeModel = obj;
+            if (textureFolders.TryGetValue(Path.GetFileName(dat), out var folder))
+                costumeModel = obj.WithTextureFolder(folder);
 
-                var output = Path.Combine(outDir, Path.GetFileName(dat));
-                file.Save(output);
-
-                // read the result back and check the parts netplay depends on
-                var saved = (HSD_JOBJ)new HSDRawFile(output).Roots[0].Data;
-                var problems = Validator.Check(before, saved);
-                if (problems.Count > 0)
-                    throw new Exception($"{Path.GetFileName(output)} failed checks:\n  " + string.Join("\n  ", problems));
-
-                Console.WriteLine($"wrote {Path.GetFileName(output)} ({new FileInfo(output).Length / 1024} KB), skeleton unchanged");
+            var before = Validator.Snapshot(root);
+            var builder = new SkinBuilder(file, sk) { FighterData = fighterData, Flat = opt.Style == "animelee" };
+            if (fighterData != null)
+            {
+                var code = BoneMaps.Code(dat);
+                builder.WeaponSlots = Weapons.AllSlots(fighterData, code);
+                builder.WeaponParts = Weapons.Build(root, sk, fighterData, code, uploads);
             }
+            builder.Replace(costumeModel, positions, normals, rig.Weights);
+
+            var output = Path.Combine(outDir, Path.GetFileName(dat));
+            file.Save(output);
+
+            // read the result back and check the parts netplay depends on
+            var saved = (HSD_JOBJ)new HSDRawFile(output).Roots[0].Data;
+            var problems = Validator.Check(before, saved);
+            if (problems.Count > 0)
+                throw new Exception($"{Path.GetFileName(output)} failed checks:\n  " + string.Join("\n  ", problems));
+
+            builder.Notes.Add($"wrote {Path.GetFileName(output)} ({new FileInfo(output).Length / 1024} KB), skeleton unchanged");
+            return builder.Notes;
         }
     }
 }
+

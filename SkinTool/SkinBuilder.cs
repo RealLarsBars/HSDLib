@@ -5,6 +5,7 @@ using HSDRaw.GX;
 using HSDRaw.Tools;
 using StbImageSharp;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -38,6 +39,13 @@ namespace SkinTool
         // the Animelee look: the model's materials drawn without lighting, its colours flattened
         public bool Flat;
         public List<Weapons.Part> WeaponParts = new();
+
+        // lines to print about this costume (costumes are built side by side, so they print afterwards in order)
+        public List<string> Notes = new();
+
+        // textures are encoded once and shared by every costume: encoding them is slow
+        private record Texture(byte[] Data, int Width, int Height, GXTexFmt Format, bool Alpha);
+        private static readonly ConcurrentDictionary<(string Path, bool Flat), Lazy<Texture>> Encoded = new();
 
         public SkinBuilder(HSDRawFile file, Skeleton skeleton)
         {
@@ -80,7 +88,7 @@ namespace SkinTool
             if (groups.Count > freeSlots.Count && shown.Count >= groups.Count)
             {
                 // fighters without single-texture meshes (Game & Watch) have nowhere better to go
-                Console.WriteLine($"warning: only {freeSlots.Count} single-texture slots for {groups.Count} meshes; also using slots that had other texture counts");
+                Notes.Add($"warning: only {freeSlots.Count} single-texture slots for {groups.Count} meshes; also using slots that had other texture counts");
                 freeSlots.AddRange(shown.Where(i => textureCounts[i] != 1));
             }
             if (groups.Count > freeSlots.Count)
@@ -300,6 +308,42 @@ namespace SkinTool
 
         private static HSD_TOBJ LoadTexture(string path, bool flat)
         {
+            var texture = Encoded.GetOrAdd((path, flat), key => new Lazy<Texture>(() => Encode(key.Path, key.Flat))).Value;
+
+            var tobj = new HSD_TOBJ()
+            {
+                MagFilter = GXTexFilter.GX_LINEAR,
+                Flags = TOBJ_FLAGS.COORD_UV | TOBJ_FLAGS.LIGHTMAP_DIFFUSE | TOBJ_FLAGS.COLORMAP_MODULATE,
+                RepeatS = 1,
+                RepeatT = 1,
+                WrapS = GXWrapMode.REPEAT,
+                WrapT = GXWrapMode.REPEAT,
+                SX = 1,
+                SY = 1,
+                SZ = 1,
+                GXTexGenSrc = GXTexGenSrc.GX_TG_TEX0,
+                TexMapID = GXTexMapID.GX_TEXMAP0,
+                Blending = 1,
+            };
+
+            if (texture.Alpha)
+                tobj.Flags |= TOBJ_FLAGS.ALPHAMAP_MODULATE;
+
+            // what EncodeImageData sets, with the encoding already done
+            tobj.TlutData = null;
+            tobj.ImageData = new HSD_Image
+            {
+                ImageData = texture.Data,
+                Width = (short)texture.Width,
+                Height = (short)texture.Height,
+                Format = texture.Format,
+            };
+
+            return tobj;
+        }
+
+        private static Texture Encode(string path, bool flat)
+        {
             ImageResult image;
             using (var stream = File.OpenRead(path))
                 image = ImageResult.FromStream(stream, ColorComponents.RedGreenBlueAlpha);
@@ -323,30 +367,9 @@ namespace SkinTool
             for (int i = 3; i < bgra.Length; i += 4)
                 if (bgra[i] < 250) { alpha = true; break; }
 
-            var tobj = new HSD_TOBJ()
-            {
-                MagFilter = GXTexFilter.GX_LINEAR,
-                Flags = TOBJ_FLAGS.COORD_UV | TOBJ_FLAGS.LIGHTMAP_DIFFUSE | TOBJ_FLAGS.COLORMAP_MODULATE,
-                RepeatS = 1,
-                RepeatT = 1,
-                WrapS = GXWrapMode.REPEAT,
-                WrapT = GXWrapMode.REPEAT,
-                SX = 1,
-                SY = 1,
-                SZ = 1,
-                GXTexGenSrc = GXTexGenSrc.GX_TG_TEX0,
-                TexMapID = GXTexMapID.GX_TEXMAP0,
-                Blending = 1,
-            };
-
-            if (alpha)
-                tobj.Flags |= TOBJ_FLAGS.ALPHAMAP_MODULATE;
-
             // CMP is what the game's own costumes use; it has no smooth alpha, so cutouts use RGB5A3
             var fmt = alpha ? GXTexFmt.RGB5A3 : GXTexFmt.CMP;
-            tobj.EncodeImageData(bgra, w, h, fmt, GXTlutFmt.IA8);
-
-            return tobj;
+            return new Texture(GXImageConverter.EncodeImage(bgra, w, h, fmt, GXTlutFmt.IA8, out _), w, h, fmt, alpha);
         }
 
         /// <summary>

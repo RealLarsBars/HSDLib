@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Numerics;
+using System.Threading.Tasks;
 
 namespace SkinTool
 {
@@ -90,10 +91,13 @@ namespace SkinTool
             var sheet = new Bitmap(cell * 2, cell);
             var fighterSheet = new Bitmap(cell * 2, cell);
             var modelSheet = new Bitmap(cell * 2, cell, clear: true);
+            // the four pictures are drawn side by side
+            var drawn = new Bitmap[4];
+            Parallel.For(0, 4, k => drawn[k] = k % 2 == 0 ? Render(sk, original, bind, k / 2 * 90f, cell) : Render(sk, tris, bind, k / 2 * 90f, cell, clear: true));
             for (int v = 0; v < 2; v++)
             {
-                var img = Render(sk, original, bind, v * 90f, cell);
-                var mine = Render(sk, tris, bind, v * 90f, cell, clear: true);
+                var img = drawn[v * 2];
+                var mine = drawn[v * 2 + 1];
                 fighterSheet.Draw(img, v * cell, 0);
                 img.Blend(mine, 0.6f);
                 // where the head starts: a dashed line, placed the way Render places heights
@@ -111,9 +115,7 @@ namespace SkinTool
                 modelSheet.Draw(mine, v * cell, 0);
             }
             var stem = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(output)), System.IO.Path.GetFileNameWithoutExtension(output));
-            fighterSheet.SavePng(stem + "-fighter.png");
-            modelSheet.SavePng(stem + "-model.png");
-            sheet.SavePng(output);
+            Parallel.Invoke(() => fighterSheet.SavePng(stem + "-fighter.png"), () => modelSheet.SavePng(stem + "-model.png"), () => sheet.SavePng(output));
             Console.WriteLine($"wrote {output}");
         }
 
@@ -211,8 +213,9 @@ namespace SkinTool
             Render(sk, tris, new Pose { Name = "bind" }, 0, size, framing: framing).SavePng(output);
         }
 
-        public static int Run(string[] args)
+        public static int Run(string[] args, Action<string> say = null)
         {
+            say ??= Console.WriteLine;
             string output = args[1];
             var dats = args.Skip(2).ToList();
 
@@ -269,12 +272,11 @@ namespace SkinTool
                 var all = Decode(sk);
                 var tris = all.Where(t => !hidden.Contains(t.Slot)).ToList();
 
-                for (int p = 0; p < poses.Count; p++)
-                    for (int v = 0; v < views; v++)
-                    {
-                        var img = Render(sk, tris, poses[p], v * 90f, cell);
-                        sheet.Draw(img, (p * views + v) * cell, row * cell);
-                    }
+                // each pose and view is drawn on its own, so they're shared out across the cores
+                var imgs = new Bitmap[poses.Count * views];
+                Parallel.For(0, imgs.Length, k => imgs[k] = Render(sk, tris, poses[k / views], k % views * 90f, cell));
+                for (int k = 0; k < imgs.Length; k++)
+                    sheet.Draw(imgs[k], k * cell, row * cell);
 
                 // the first costume holding each weapon, front and side
                 if (row == 0 && weapons.Length > 0)
@@ -292,10 +294,10 @@ namespace SkinTool
             }
 
             sheet.SavePng(output);
-            Console.WriteLine($"poses: {string.Join(", ", poses.Select(p => p.Name))} (front and side each)");
+            say($"poses: {string.Join(", ", poses.Select(p => p.Name))} (front and side each)");
             if (weapons.Length > 0)
-                Console.WriteLine($"weapons row: {string.Join(", ", weapons.Select(w => w.Key))}");
-            Console.WriteLine($"wrote {output}");
+                say($"weapons row: {string.Join(", ", weapons.Select(w => w.Key))}");
+            say($"wrote {output}");
             return 0;
         }
 
@@ -407,7 +409,7 @@ namespace SkinTool
         /// belong to (a head fanning out into wings). Returns a line to show the user, or null when the
         /// skin holds together.
         /// </summary>
-        public static string StretchCheck(string dat, HSDRaw.Melee.Pl.SBM_FighterData fighter, List<Pose> poses)
+        public static string StretchCheck(string dat, HSDRaw.Melee.Pl.SBM_FighterData fighter, List<Pose> poses, Action<string> say = null)
         {
             var file = new HSDRawFile(dat);
             var sk = new Skeleton((HSD_JOBJ)file.Roots[0].Data);
@@ -453,7 +455,7 @@ namespace SkinTool
             bool OnFoot(Tri t) => new[] { t.A, t.B, t.C }.Any(v => v.Bones.Any(stretchy.Contains));
             var bad = Enumerable.Range(0, tris.Count).Where(i => worst[i] > StretchLimit * (OnFoot(tris[i]) ? 3 : 1)).ToList();
             float share = total > 0 ? bad.Sum(i => Area(tris[i])) / total : 0;
-            Console.WriteLine(FormattableString.Invariant($"stretch check: {share:P1} of the skin's area pulled to more than {StretchLimit}x in some pose"));
+            (say ?? Console.WriteLine)(FormattableString.Invariant($"stretch check: {share:P1} of the skin's area pulled to more than {StretchLimit}x in some pose"));
             if (share < StretchWarn)
                 return null;
 

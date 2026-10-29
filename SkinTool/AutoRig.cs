@@ -1329,7 +1329,8 @@ namespace SkinTool
             var pools = Enumerable.Range(0, RegionNames.Length)
                 .Select(r => Enumerable.Range(0, fv.Count).Where(k => FighterRegion[k] == r).ToArray())
                 .ToArray();
-            for (int i = 0; i < n; i++)
+            // each point only reads the fighter, so the points are shared out across the cores
+            System.Threading.Tasks.Parallel.For(0, n, i =>
             {
                 var p = Lookup[i];
                 int region = ModelRegion[i];
@@ -1369,7 +1370,7 @@ namespace SkinTool
                     acc = any;
                 Normalize(acc);
                 w[i] = acc;
-            }
+            });
 
             // 1b. limbs that don't line up with the fighter's partly stay with the body around them
             for (int region = 0; region < LimbFollow.Length; region++)
@@ -1891,16 +1892,21 @@ namespace SkinTool
 
         private void Smooth(float[][] w, HashSet<int>[] adj, int boneCount, int passes, Func<int, bool> include)
         {
+            // who smooths with whom stays the same every pass
+            var nears = new List<int>[w.Length];
+            System.Threading.Tasks.Parallel.For(0, w.Length, i =>
+                nears[i] = RigidPart[i] || !include(i) ? null : adj[i].Where(include).ToList());
             for (int pass = 0; pass < passes; pass++)
             {
+                // each point reads only the last pass, so the points are shared out across the cores
                 var next = new float[w.Length][];
-                for (int i = 0; i < w.Length; i++)
+                System.Threading.Tasks.Parallel.For(0, w.Length, i =>
                 {
-                    var near = adj[i].Where(include).ToList();
-                    if (RigidPart[i] || !include(i) || near.Count == 0)
+                    var near = nears[i];
+                    if (near == null || near.Count == 0)
                     {
                         next[i] = w[i];
-                        continue;
+                        return;
                     }
 
                     var avg = new float[boneCount];
@@ -1912,7 +1918,7 @@ namespace SkinTool
                     for (int b = 0; b < boneCount; b++)
                         r[b] = 0.5f * w[i][b] + 0.5f * avg[b] * inv;
                     next[i] = r;
-                }
+                });
                 Array.Copy(next, w, w.Length);
             }
         }
