@@ -54,7 +54,19 @@ the model and its textures, and an `--out` ending in `.zip` collects the costume
 
 **Second copies.** Rips sometimes carry two versions of one part on top of each other (Gusteau's gameplay
 and cutscene body and head). Drawn together they fight over which is in front and come apart in moves, so
-only one is kept: the one not named for cutscenes, or else the first.
+only one is kept: the one not named for cutscenes, or else the most detailed (`remy_lod0` over `remy_lod1`), or
+else the first.
+
+**Tails and depth.** A long tail laid out behind (Remy's) makes the model's box much deeper than its body, so the
+body is placed by its own middle, as the fighter's is, not the box's: otherwise it lands in front of the fighter's
+bones and its arms end up inside its chest. With `--tail yes`, only what's behind the body below the neck is
+tail; big ears laid back behind the head stay on the head instead of swinging with the tail bones. A tail running a
+different way from the fighter's (Remy's lies along the floor, Pikachu's goes up behind its back) is bent to
+run along the fighter's tail bones from where it leaves the body, keeping its own length and thickness, so it
+moves like the fighter's tail (not for models stood up with `--rotate`). Arms moved
+onto the fighter's arms keep following them in low moves (on a fighter with short arms, like Pikachu, they
+were handed to the hips to keep the hands off the floor, and stayed stiff); a four-legged model's front legs
+still let go.
 
 **Legs.** A model with no real legs (a round body on little feet) is found from its shape. Its body
 works as legs: the bottom 30% (`--leg-band`) bends with the fighter's legs, left half with the left
