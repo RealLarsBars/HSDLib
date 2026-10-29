@@ -92,6 +92,7 @@ line or in a `skin.txt` next to the OBJ (or in the zip):
 ```
 legs = body       # auto | separate | body | cut | dress (cut: two legs down the fighter's legs;
                   #   dress: the legs run up to the hips under a long coat or dress)
+clothes = outside # outside | legs (clothes found over the legs: one sheet over them, or split to follow each leg)
 arms = auto       # auto | fighter (always onto the fighter's arms) | body
 neck = auto       # auto | none | 0.6 (where the head starts, as a share of the height)
 scale = 1.1
@@ -133,6 +134,30 @@ Other commands:
 - `preview ... --anims <Pl.dat> <PlAJ.dat> --poses AttackAirB@0.25,AttackAirF@0.3`: draws chosen moves.
 - `inspect <costume.dat>`, `slots <Pl**.dat>`: list joints, meshes and visibility tables.
 - `preview ... --slots 55,56` draws only those mesh slots, to see what a slot holds.
+
+## Legs under clothes
+
+A coat, apron or dress hanging across between the legs hides where they part, so from the outside the
+model looks legless. Cut across at each height, such clothes are a run of surface crossing the middle with
+other runs (the legs) under it on both sides: all round them for a dress or coat, in front for an apron.
+Set aside, they leave the real legs, and when those part well higher up (Peach's dress: legs to 30% of her
+height instead of 5%; Linguini's apron: 34% instead of 22%) the build reports
+`clothes over the legs: ... from 22 % to 35 % of the height; under them the legs part up to 34 %` and the
+legs run up to the hips under the clothes. A dress with nothing inside (Peach's wedding dress) and a blob on
+feet (Monty, Gusteau) aren't clothes over legs.
+
+`--clothes` says how the clothes move:
+
+- `outside` (default): they stay one sheet over the legs. From the waist down each point follows the hips
+  less and the thighs more, the side over a leg mostly that leg and the middle both alike, so the sheet
+  stretches in a stride instead of tearing down the middle. On a fighter in a dress of its own (Peach,
+  Zelda) they take the weights of the nearest points of that dress instead, so they swing on its skirt
+  joints like the fighter's own. The legs under them are drawn in a little and move with the clothes over
+  them, easing back into their own leg at the hem, so they stay hidden instead of poking through.
+- `legs`: they split down the middle and follow each leg, like trousers. They move more, but can open up
+  in big kicks.
+
+`--legs body` treats the model as having no legs instead.
 
 ## Legs pressed together
 
