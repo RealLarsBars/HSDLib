@@ -215,23 +215,33 @@ namespace SkinTool
 
         /// <summary>
         /// Slides the weighted model to where the user wants it on the fighter (a model with a long neck
-        /// and tail, like Spyro, can sit too far forward). Each part keeps its bones; it never goes up off
-        /// the floor, so a skin can't float.
+        /// and tail, like Spyro, can sit too far forward). Each part keeps its bones. It goes as far up or
+        /// down as asked, with a warning when that leaves it floating or sunk into the floor.
         /// </summary>
         private void Move(FighterMesh fighter, Options opt)
         {
             if (opt.Forward == 0 && opt.Up == 0)
                 return;
             float tall = fighter.Max.Y - fighter.Min.Y;
-            float floor = Positions.Min(p => p.Y);
-            float up = MathF.Min(opt.Up * tall, MathF.Max(fighter.Min.Y - floor, 0));
+            float up = opt.Up * tall;
             var by = new Vector3(0, up, opt.Forward * tall);
             for (int i = 0; i < Positions.Length; i++)
                 Positions[i] += by;
             NeckY += up;
-            Report += $"moved {opt.Forward:+0%;-0%;0%} forward and {up / tall:+0%;-0%;0%} up\n"
-                + (opt.Up * tall > up + 1e-4f ? "  (no higher: it would float off the floor)\n" : "");
+            // moved down on purpose: the floor guard lets it go that much lower
+            Lowered = MathF.Max(-up, 0);
+            Report += $"moved {opt.Forward:+0%;-0%;0%} forward and {opt.Up:+0%;-0%;0%} up\n";
+            if (up == 0)
+                return;
+            float gap = (Positions.Min(p => p.Y) - fighter.Min.Y) / tall;
+            if (gap > 0.01f)
+                Report += $"position: the model's lowest point is {gap:0%} of the character's height above the floor, so it floats\n";
+            else if (gap < -0.03f)
+                Report += $"position: the model's lowest point is {-gap:0%} of the character's height below the floor, so its feet sink in\n";
         }
+
+        // how far Move put the model down (it is let go that much lower before the floor guard steps in)
+        public float Lowered;
 
         // a blended point counts as flat under half its depth
         const float KeepDepth = 0.5f;
@@ -252,7 +262,7 @@ namespace SkinTool
         {
             int n = Positions.Length;
             float tall = Positions.Max(p => p.Y) - Positions.Min(p => p.Y);
-            var allowed = lowest.Select(l => MathF.Min(l, 0) - 0.03f * tall).ToArray();
+            var allowed = lowest.Select(l => MathF.Min(l, 0) - 0.03f * tall - Lowered).ToArray();
             var skins = poses.Select(p => Preview.PosedSkinning(skeleton, p)).ToArray();
             var all = moves.Select(p => Preview.PosedSkinning(skeleton, p)).ToArray();
             // a point's weights with bone `from` handing `share` to `to` (at most three, as everywhere else)
@@ -349,8 +359,8 @@ namespace SkinTool
                     var theirs = Enumerable.Range(0, fighter.Vertices.Count).Where(k => FighterRegion[k] == BoneRegion[bone]).Select(k => fighter.Vertices[k].Position).ToList();
                     if (theirs.Count == 0 || to.Count == 0)
                         continue;
-                    var lo = theirs.Aggregate(Vector3.Min) - new Vector3(0.02f * tall);
-                    var hi = theirs.Aggregate(Vector3.Max) + new Vector3(0.02f * tall);
+                    var lo = theirs.Aggregate(Vector3.Min) - new Vector3(0.02f * tall) - new Vector3(0, Lowered, 0);
+                    var hi = theirs.Aggregate(Vector3.Max) + new Vector3(0.02f * tall) - new Vector3(0, Lowered, 0);
                     float ramp = 0.1f * tall;
                     reach = i => Math.Clamp((Vector3.Max(Vector3.Max(lo - Positions[i], Positions[i] - hi), Vector3.Zero)).Length() / ramp, 0, 1);
                     for (int a = skeleton.Parent[to[0]]; a > 0; a = skeleton.Parent[a])

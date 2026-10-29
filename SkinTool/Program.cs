@@ -37,8 +37,8 @@ build    Swaps the model into every costume given, keeping each costume's skelet
          A .zip model (OBJ, MTL and textures) is unpacked first; an --out ending in .zip collects the costumes in one zip.
          --width and --height stretch the fitted model sideways or upwards only (1 = as fitted).
          --move slides the fitted model forward (or back, negative) and up or down, as shares of the
-         fighter's height (--move -0.1 puts it a tenth of the fighter's height further back). It never
-         goes up off the floor.
+         fighter's height (--move -0.1 puts it a tenth of the fighter's height further back). Forward goes up to
+         0.5 either way, up up to 1 either way; it says when the model ends up floating or in the floor (a ""position:"" line).
          --legs says how the model's legs work: separate legs, a body that works as legs (the bottom
          bends with the fighter's legs), or a bottom cut into two legs; auto picks from its shape.
          --clothes is for clothes found hanging across between the legs (a coat, apron or dress with legs
@@ -179,8 +179,8 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
         static void Move(AutoRig.Options opt, string value)
         {
             var parts = value.Split(',').Select(v => float.Parse(v.Trim(), CultureInfo.InvariantCulture)).ToArray();
-            if (parts.Length < 1 || parts.Length > 2 || parts.Any(v => MathF.Abs(v) > 0.5f))
-                throw new Exception($"move takes forward or forward,up, each between -0.5 and 0.5, not {value}");
+            if (parts.Length < 1 || parts.Length > 2 || MathF.Abs(parts[0]) > 0.5f || (parts.Length > 1 && MathF.Abs(parts[1]) > 1))
+                throw new Exception($"move takes forward or forward,up: forward between -0.5 and 0.5, up between -1 and 1, not {value}");
             opt.Forward = parts[0];
             opt.Up = parts.Length > 1 ? parts[1] : 0;
         }

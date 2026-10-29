@@ -17,8 +17,9 @@ What `build` does, in the order the usual Blender + HSDRaw tutorial does it by h
    "as wide as its arm span", but never wider than the arm span; `--scale` adjusts it, `--rotate`
    turns a model that faces the wrong way; `--rotate x,y,z` also stands up one that lies down or is
    upside down, in degrees about each axis; `--move forward,up` slides the weighted model forward or
-   back and down, as shares of the fighter's height, for a model that sits too far forward, like Spyro
-   with his long neck; it never goes up off the floor).
+   back and up or down, as shares of the fighter's height, for a model that sits too far forward, like
+   Spyro with his long neck; it says when that leaves the model floating or sunk into the floor, and
+   the floor guard lets a model moved down sit that much lower).
 2. **Weights** (the Data Transfer step): copies weights from the fighter's own mesh, onto the bones
    modders weight custom skins to (the fighter's bone map in `BoneMaps.cs`: face, body, shoulders,
    elbows, hands, legs, knees and feet). Where a mapped limb bone isn't one the costume's own model
