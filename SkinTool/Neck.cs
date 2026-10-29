@@ -94,6 +94,19 @@ namespace SkinTool
             return new Neck { Center = at, Tilt = tilt, Share = share };
         }
 
+        /// <summary>
+        /// The model cut across level at each of <paramref name="slices"/> heights: the left and right ends of each
+        /// closed outline the cut makes (a body with arms hanging beside it, apart from it, makes three).
+        /// </summary>
+        public static List<(float Lo, float Hi)>[] Across(Vector3[] pts, IList<(int a, int b, int c)> tris, Vector3 min, Vector3 size, int slices)
+        {
+            var weld = Weld(pts, size);
+            var runs = new List<(float Lo, float Hi)>[slices];
+            System.Threading.Tasks.Parallel.For(0, slices, s => runs[s] = Cut(pts, tris, weld, Vector3.UnitY, Vector3.UnitZ, min.Y + (s + 0.5f) / slices * size.Y)
+                .Select(c => (c.Hull.Min(h => h.X), c.Hull.Max(h => h.X))).ToList());
+            return runs;
+        }
+
         // one lean: the model's cross-sections along it, and the profile of the one around the head's
         // middle, top down
         class Scanned
