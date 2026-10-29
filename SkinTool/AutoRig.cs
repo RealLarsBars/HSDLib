@@ -26,6 +26,9 @@ namespace SkinTool
             // fighter's height, after it is weighted: it only changes where it sits on the fighter
             public float Forward = 0, Up = 0;
 
+            // which of the model's eye states it gets (see Eyes), by key; null: the default ones
+            public string Eyes;
+
             // the look: normal, or animelee (black outline, flat lighting, flat colours)
             public string Style = "normal";
 

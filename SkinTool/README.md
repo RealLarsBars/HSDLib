@@ -192,6 +192,22 @@ come with the face's eyes in one expression (Peach's shut in a smile) and each e
 own file: when `Name_LEye.SMD` and `Name_REye.SMD` sit next to the model, their open eye areas are stitched
 into the face in place of its own, and the eyelashes of the other expressions are left out.
 
+## Picking the eyes
+
+Some models come with their eyes in more than one state, and `--eyes <key>` (or `eyes = <key>` in skin.txt)
+picks which the skin gets:
+
+- Super Mario Odyssey rips: each state's eye files (`Name_LEyeClose.SMD`, `_LEyeHalf`, `_LEyeSmile`) give
+  `open`, `closed`, `half-open` and `smiling`. Open is the default.
+- A numbered or named set of eye textures beside the model (`cartman_eyes_1.png` to `_9`, `eye_open.png`
+  and `eye_closed.png`): the key is the number or the state, and the default is the one the material names.
+  The same eyes ripped from other consoles (`Eye (PS2).png`) aren't counted as states.
+- Eye meshes per state drawn on top of each other (`Eye_Open`, `Eye_Close`): only the picked state's are
+  kept; open by default.
+
+`skintool models` lists the keys of each model (`eyes <n> <key> default|choice <label>`) and draws a
+close-up of each state (`<n>-eyes-<key>.png`) for the panel to pick from.
+
 ## Pieces that touch
 
 A model made of separate pieces (a shirt with the arms as their own meshes, legs inside a pair of shorts)

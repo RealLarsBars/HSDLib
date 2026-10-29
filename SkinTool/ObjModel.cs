@@ -42,13 +42,30 @@ namespace SkinTool
         // what loading changed about the model, for the build report
         public readonly List<string> Notes = new();
 
-        public static ObjModel Load(string path)
+        /// <summary>Reads a model, with the eyes picked by key (see <see cref="Eyes"/>; null: the default ones).</summary>
+        public static ObjModel Load(string path, string eyes = null)
         {
-            var model = path.EndsWith(".obj", StringComparison.OrdinalIgnoreCase) ? LoadObj(path) : ModelImport.Load(path);
-            if (EyeSwap.Apply(model, path) is string swapped)
+            var model = LoadRaw(path);
+            if (SkinTool.Eyes.Apply(model, path, eyes) is string swapped)
                 model.Notes.Add(swapped);
             Outlines.Mark(model);
             return model;
+        }
+
+        /// <summary>Reads a model as its file has it, with no eyes swapped in.</summary>
+        public static ObjModel LoadRaw(string path) =>
+            path.EndsWith(".obj", StringComparison.OrdinalIgnoreCase) ? LoadObj(path) : ModelImport.Load(path);
+
+        /// <summary>A copy whose parts and materials can change without changing this one.</summary>
+        public ObjModel Copy()
+        {
+            var copy = new ObjModel { Directory = Directory, Textures = new Dictionary<string, string>(Textures) };
+            copy.Positions.AddRange(Positions);
+            copy.UVs.AddRange(UVs);
+            copy.Normals.AddRange(Normals);
+            copy.Triangles.AddRange(Triangles);
+            copy.Notes.AddRange(Notes);
+            return copy;
         }
 
         /// <summary>Drops the positions no triangle uses any more, after parts were left out.</summary>

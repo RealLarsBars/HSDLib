@@ -13,7 +13,7 @@ namespace SkinTool
         const string Usage =
 @"skintool build --model <model.obj/.fbx/.dae|model.zip> --dat <costume.dat> [--dat <costume.dat> ...] --out <folder|out.zip>
                [--fighter <Pl**.dat>] [--bones 41,22,...] [--scale 1.0] [--width 1.0] [--height 1.0] [--rotate 0 | x,y,z] [--move forward[,up]] [--textures <costume.dat>=<folder> ...]
-               [--legs auto|separate|body|cut|dress] [--clothes outside|legs] [--arms auto|fighter|body] [--neck auto|none|0.6] [--tail yes|no] [--attach yes|no] [--style normal|animelee] [--leg-band 0.3] [--keep-shape]
+               [--legs auto|separate|body|cut|dress] [--clothes outside|legs] [--arms auto|fighter|body] [--neck auto|none|0.6] [--tail yes|no] [--attach yes|no] [--style normal|animelee] [--eyes <key>] [--leg-band 0.3] [--keep-shape]
                [--pick <model in the zip or folder>] [--weapon <name>=<model|zip> [--weapon-pick <name>=<model>] [--weapon-flip <name>] ...]
                [--preview <out.png> [--anims <Pl**AJ.dat>]] [--overlay <out.png> [--fit-only]] [--portraits <folder>]
 skintool models <zip|folder> --out <folder>
@@ -52,6 +52,9 @@ build    Swaps the model into every costume given, keeping each costume's skelet
          --attach (yes by default) keeps separate pieces that touch (a sleeve on a shirt) joined in every
          pose; no lets loose pieces swing on their own.
          --style animelee gives the skin the Animelee look: a black outline, flat lighting and flat colours.
+         --eyes picks the eyes when the model comes with more than one state of them (open and closed eye
+         files beside an Odyssey rip, a numbered set of eye textures, eye meshes per state); models lists
+         the keys. Left out, the skin gets the open eyes, or the texture the model's materials name.
          The same rules can come with the model in a skin.txt next to the OBJ (""legs = body"").
          --overlay draws the fitted model over the first costume, to check its size; with --fit-only
          that's all it does (no costumes are written, --out isn't needed).
@@ -61,7 +64,9 @@ build    Swaps the model into every costume given, keeping each costume's skelet
          --preview renders the first costume, in the fighter's real animations with --anims (needs --fighter).
          --portraits draws a character select portrait of each costume (136x188, <costume>_csp.png) into
          the folder and next to the costumes (needs --fighter and --anims).
-models   Lists the models in a zip or folder and draws each one (<folder>/<n>.png), to pick from.
+models   Lists the models in a zip or folder and draws each one (<folder>/<n>.png), to pick from. A model
+         with more than one state of eyes gets a line per state (""eyes <n> <key> default|choice <label>"")
+         and a close-up of each (<folder>/<n>-eyes-<key>.png).
 weapons  Lists the weapons a fighter holds, by the names --weapon takes.
 stretch  Poses a finished costume in the fighter's moves and warns about parts that get pulled apart
          (build does the same whenever it has --anims and --fighter).
@@ -227,11 +232,12 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
                     case "rotate": Rotate(opt, value); break;
                     case "move": Move(opt, value); break;
                     case "style": opt.Style = Rule(name, value, "normal", "animelee"); break;
+                    case "eyes": opt.Eyes = value; break;
                     case "leg-band": opt.LegBand = float.Parse(value, CultureInfo.InvariantCulture); break;
                     case "neck": opt.Neck = Neck(value); break;
                     case "tail": opt.HasTail = YesNo("tail", value); break;
                     case "attach": opt.Attach = YesNo("attach", value); break;
-                    default: throw new Exception($"skin.txt: unknown rule {name} (legs, arms, neck, tail, attach, style, scale, width, height, rotate, move, leg-band)");
+                    default: throw new Exception($"skin.txt: unknown rule {name} (legs, arms, neck, tail, attach, style, eyes, scale, width, height, rotate, move, leg-band)");
                 }
                 Console.WriteLine($"rule from skin.txt: {name} = {value}");
             }
@@ -277,9 +283,17 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
                     var name = Path.GetRelativePath(folder, models[i]).Replace('\\', '/');
                     try
                     {
-                        var obj = ObjModel.Load(models[i]);
+                        var raw = ObjModel.LoadRaw(models[i]);
+                        var eyes = Eyes.Find(raw, models[i]);
+                        var obj = raw.Copy();
+                        Eyes.Apply(obj, models[i], null, eyes);
                         Preview.Thumbnail(obj, Path.Combine(outDir, $"{i}.png"));
                         Console.WriteLine($"model {i} {obj.Triangles.Count} {name}");
+                        if (eyes != null && Eyes.Pictures(raw, models[i], eyes, Path.Combine(outDir, i.ToString())))
+                        {
+                            foreach (var c in eyes.Choices)
+                                Console.WriteLine($"eyes {i} {c.Key} {(c.Key == eyes.Default ? "default" : "choice")} {c.Label}");
+                        }
                     }
                     catch (Exception e)
                     {
@@ -441,6 +455,7 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
                     case "--rotate": Rotate(opt, Next()); break;
                     case "--move": Move(opt, Next()); break;
                     case "--style": opt.Style = Rule("style", Next(), "normal", "animelee"); break;
+                    case "--eyes": opt.Eyes = Next(); break;
                     case "--pick": pick = Next(); break;
                     case "--overlay": overlayPng = Next(); break;
                     case "--fit-only": fitOnly = true; break;
@@ -599,7 +614,7 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
             if (!fitOnly)
                 Directory.CreateDirectory(outDir);
             var fighterData = fighterDat != null ? Slots.Load(fighterDat) : null;
-            var obj = ObjModel.Load(model);
+            var obj = ObjModel.Load(model, opt.Eyes);
             int holes = obj.CloseSmallHoles();
             if (holes > 0)
                 Console.WriteLine($"closed {holes} small openings (open claw or tooth bases)");

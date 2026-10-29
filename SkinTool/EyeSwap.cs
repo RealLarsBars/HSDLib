@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Numerics;
+using System.Text.RegularExpressions;
 
 namespace SkinTool
 {
@@ -15,12 +16,34 @@ namespace SkinTool
     /// </summary>
     public static class EyeSwap
     {
-        public static string Apply(ObjModel model, string modelPath)
+        /// <summary>
+        /// The eye states with a file for each eye beside the model: "" (Name_LEye.SMD, open), "Close",
+        /// "Half", "Smile" and so on, as the rip names them.
+        /// </summary>
+        public static List<string> States(string modelPath)
         {
             var dir = Path.GetDirectoryName(Path.GetFullPath(modelPath));
-            // the same model exported to Collada is Name_OpenCollada.dae
-            var stem = System.Text.RegularExpressions.Regex.Replace(Path.GetFileNameWithoutExtension(modelPath), "_OpenCollada$", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-            var files = new[] { "_LEye.smd", "_REye.smd" }
+            var stem = Stem(modelPath);
+            var names = Directory.EnumerateFiles(dir).Select(Path.GetFileName).ToList();
+            string StateOf(string name, string side)
+            {
+                var m = Regex.Match(name, "^" + Regex.Escape(stem) + "_" + side + "Eye([A-Za-z]*)\\.smd$", RegexOptions.IgnoreCase);
+                return m.Success ? m.Groups[1].Value : null;
+            }
+            var right = names.Select(n => StateOf(n, "R")).Where(s => s != null).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            return names.Select(n => StateOf(n, "L")).Where(s => s != null && right.Contains(s))
+                .OrderBy(s => s.Length > 0).ThenBy(s => s, StringComparer.OrdinalIgnoreCase).ToList();
+        }
+
+        // the same model exported to Collada is Name_OpenCollada.dae
+        static string Stem(string modelPath) => Regex.Replace(Path.GetFileNameWithoutExtension(modelPath), "_OpenCollada$", "", RegexOptions.IgnoreCase);
+
+        /// <summary>Swaps in the eye areas of one state ("" is open), when both eyes' files sit beside the model.</summary>
+        public static string Apply(ObjModel model, string modelPath, string state = "")
+        {
+            var dir = Path.GetDirectoryName(Path.GetFullPath(modelPath));
+            var stem = Stem(modelPath);
+            var files = new[] { $"_LEye{state}.smd", $"_REye{state}.smd" }
                 .Select(suffix => Directory.EnumerateFiles(dir).FirstOrDefault(f => Path.GetFileName(f).Equals(stem + suffix, StringComparison.OrdinalIgnoreCase)))
                 .ToList();
             if (files.Any(f => f == null) || model.Triangles.Count == 0)
@@ -41,11 +64,22 @@ namespace SkinTool
                 // a Collada export of the same model may be in other units (Peach's in metres, from inches)
                 var area = ReadSmd(file);
                 if (area.Count == 0 || !Scales.Any(k => Swap(model, Scaled(area, k), weld)))
-                    return swapped > 0 ? "open eyes swapped in for one eye only" : null;
+                    return swapped > 0 ? $"{Name(state)} eyes swapped in for one eye only" : null;
                 swapped++;
             }
-            return "open eyes: swapped the face's eye areas for the open ones beside the model";
+            return state == "" ? "open eyes: swapped the face's eye areas for the open ones beside the model"
+                : $"{Name(state)} eyes: swapped the face's eye areas for the {Name(state)} ones beside the model";
         }
+
+        /// <summary>How a state reads: "" is open, "Close" closed, "Half" half open.</summary>
+        public static string Name(string state) => state.ToLowerInvariant() switch
+        {
+            "" => "open",
+            "close" => "closed",
+            "half" => "half-open",
+            "smile" => "smiling",
+            var s => s,
+        };
 
         static readonly float[] Scales = { 1, 0.0254f, 1 / 0.0254f, 0.01f, 100 };
 

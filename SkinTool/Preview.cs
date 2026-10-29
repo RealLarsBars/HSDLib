@@ -178,6 +178,39 @@ namespace SkinTool
             sheet.SavePng(output);
         }
 
+        /// <summary>
+        /// Draws a close-up of part of an uploaded model (between <paramref name="lo"/> and <paramref name="hi"/>,
+        /// with some room around it), seen from the side <paramref name="facing"/> points to: the eyes, to pick
+        /// which ones the skin gets.
+        /// </summary>
+        public static void Closeup(ObjModel model, Vector3 lo, Vector3 hi, Vector3 facing, string output, int size = 160)
+        {
+            var textures = new Dictionary<string, Tex>();
+            var tris = new List<Tri>();
+            foreach (var t in model.Triangles)
+            {
+                var tex = LoadTexture(model.TextureOf(t.Material), textures);
+                Vert V(ObjModel.Corner c) => new Vert
+                {
+                    Pos = model.Positions[c.Position],
+                    UV = c.UV >= 0 ? new Vector2(model.UVs[c.UV].X, 1 - model.UVs[c.UV].Y) : Vector2.Zero,
+                    Bones = new[] { 0 },
+                    Weights = new[] { 1f },
+                };
+                tris.Add(new Tri { A = V(t.A), B = V(t.B), C = V(t.C), Tex = tex, TwoSided = !t.Outline });
+            }
+
+            // look at the part straight on, from the way it faces
+            float yaw = MathF.Atan2(facing.X, facing.Z);
+            var middle = (lo + hi) / 2;
+            var view = Matrix4x4.CreateTranslation(-middle) * Matrix4x4.CreateRotationY(-yaw);
+            var extent = Vector3.Abs(Vector3.TransformNormal(hi - lo, Matrix4x4.CreateRotationY(-yaw)));
+            float span = MathF.Max(MathF.Max(extent.X, extent.Y), 1e-4f) * 1.5f;
+            var framing = new Framing { View = view, Scale = size / span, Center = new Vector2(size / 2f, size / 2f), Width = size, Height = size };
+            var sk = new Skeleton(new HSD_JOBJ { SX = 1, SY = 1, SZ = 1 });
+            Render(sk, tris, new Pose { Name = "bind" }, 0, size, framing: framing).SavePng(output);
+        }
+
         public static int Run(string[] args)
         {
             string output = args[1];
