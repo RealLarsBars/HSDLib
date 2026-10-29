@@ -32,7 +32,11 @@ What `build` does, in the order the usual Blender + HSDRaw tutorial does it by h
    they don't get flung around the fighter's shoulders. Where the fighter's arms hang down in its bind pose
    (Ganondorf), a model's arms held out in a T-pose are bent down to hang the same way, from where they
    leave the model's body, and take their weights from the fighter's arms (keeping their own length, they bend at its elbow and wrist, a
-   separate hand goes with the sleeve it sits in, and they aren't stiffened to keep the hands off the floor). Weights are smoothed over the surface, cut to
+   separate hand goes with the sleeve it sits in, and they aren't stiffened to keep the hands off the floor). Arms hanging
+   down beside the body, apart from it (Kronk's A-pose), never stick out past its outline, so they're found
+   in cuts across the model instead: an outline of their own on each side of the body's, over a good
+   stretch of the height. They are arms from the top of the shoulder down, and their place along the arm
+   is measured down their own slant, so a hand whose fingers curl back in still bends at the wrist. Weights are smoothed over the surface, cut to
    3 per vertex and normalized. Small separate pieces (claws, teeth, whiskers) move as one piece with
    the body around them. Above the neck everything follows the head alone (see Head below).
 3. **Import**: one mesh per texture, CMP textures (RGB5A3 when they have transparency), triangle strips.
@@ -92,8 +96,11 @@ to cross the neck straight, leaning only when that is clearly smaller than level
 line, leaning all the way across. Only outlines around the model's middle are followed, so a hand or a
 sword held out at neck height can't pull the line onto itself. This also finds short necks under a head
 no wider than the body (Kermit's), which the front outline misses. A level neck found by the outline
-keeps its line as before; a model stood up with `--rotate` x/z (Spyro) keeps a level one; a tiny head
-sunk in a big collar (Gusteau's) gets no line, since it bends better with the body. `--neck-tilt 20`
+keeps its line as before; a model stood up with `--rotate` x/z (Spyro) keeps a level one. A thick neck
+under a head no wider than it (Kronk's) never narrows at all, but head and neck stand on the shoulders as a
+narrow column: going down from the top, the outline steps out to shoulders at least twice as wide, and the
+head starts there (`head: it stands on the shoulders as a column 43 % as wide as them`). Without it the face
+smeared between the chest and the head in every move. `--neck-tilt 20`
 leans a line set by hand (degrees, positive lower at the front for a head tipped forward). The report
 says how the line leans (`head: everything above 79 % ... leaning 30 degrees down at the front`). Arms
 held out that reach well past the head stay arms above a low line. The size check (`--overlay`) draws

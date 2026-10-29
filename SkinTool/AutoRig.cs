@@ -179,6 +179,8 @@ namespace SkinTool
 
         // those of them bent down to hang along a fighter whose arms hang (Ganondorf)
         private readonly HashSet<int> Hung = new();
+        // arms found hanging apart from the body, beside it (Kronk's), rather than sticking out from it
+        private bool HangingArms;
 
         // the model stands on four legs, its front legs held up as the fighter's arms (Spyro)
         private bool FourLegs;
@@ -678,6 +680,31 @@ namespace SkinTool
                     cut = found;
                     neck = found.Share;
                 }
+                // a thick neck under a head no wider than it (Kronk's) never narrows, but the head and neck still
+                // stand on the shoulders as a narrow column: going down from the top, the outline jumps out to
+                // the shoulders at once. Everything above the shoulders is head, or the face smears between the
+                // chest and the head bone in every move
+                if (neck <= 0 && opt.RotateX == 0 && opt.RotateZ == 0)
+                {
+                    int headTop = Enumerable.Range(0, slices).Last(s => pointReach[s] > 0);
+                    float widest = 0;
+                    for (int s = headTop; s > slices / 2; s--)
+                    {
+                        if (pointReach[s] <= 0)
+                            continue;
+                        // past the dome of the head's top first, then a step out to shoulders twice as wide
+                        // as the head, and still that wide a little lower (not an ear or a hat brim)
+                        if (headTop - s >= slices / 8 && pointReach[s] > widest * 1.5f
+                            && Enumerable.Range(Math.Max(s - 3, 0), 3).All(k => pointReach[k] > widest * 2))
+                        {
+                            neck = (s + 1f) / slices;
+                            cut = Neck.At(pts, min, size, neck, 0);
+                            Report += $"head: it stands on the shoulders as a column {widest / pointReach[s - 1]:P0} as wide as them\n";
+                            break;
+                        }
+                        widest = MathF.Max(widest, pointReach[s]);
+                    }
+                }
             }
             else if (neck > 0)
                 cut = Neck.At(pts, min, size, neck, opt.NeckTilt);
@@ -734,6 +761,47 @@ namespace SkinTool
                 // (not a neck right above arms held out at shoulder height: that would make the chest arms)
                 var sides = new[] { reach[lo], reach[hi] }.Where(r => r > typical * 0.6f && r <= typical * 1.35f).ToList();
                 bodyReach[s] = sides.Count > 0 ? sides.Min() : typical;
+            }
+
+            // Arms hanging down beside the body (Kronk's, held low in an A-pose) make the outline as wide as the
+            // shoulders all the way down to the hands, so it never widens where they start and they passed for
+            // the body's sides: only the fingers moved with the fighter's arms. Cut across, though, they are
+            // outlines of their own on each side of the body's. Where they are, for a good stretch of the height,
+            // the body ends at its own outline, and above them (the shoulders) it goes on as wide as it is
+            // under the armpits, so the top of the arm goes with the arm
+            if (opt.Arms != "body")
+            {
+                var across = Neck.Across(pts, cutTris, min, size, slices);
+                var own = new float[slices];
+                int bottom = Math.Max(Slice(modelCrotch), 0), roof = Math.Min(neckSlice, top);
+                for (int s = bottom; s < roof; s++)
+                {
+                    var runs = across[s];
+                    if (runs.Count < 3)
+                        continue;
+                    var body = runs.MinBy(r => r.Lo <= cx && cx <= r.Hi ? 0 : MathF.Min(MathF.Abs(r.Lo - cx), MathF.Abs(r.Hi - cx)));
+                    if (runs.Any(r => r.Lo > body.Hi) && runs.Any(r => r.Hi < body.Lo))
+                        own[s] = MathF.Max(cx - body.Lo, body.Hi - cx);
+                }
+                // the longest stretch with arms apart on both sides
+                int bestFrom = -1, bestLen = 0;
+                for (int s = bottom; s < roof; s++)
+                {
+                    int e = s;
+                    while (e < roof && own[e] > 0) e++;
+                    if (e - s > bestLen) { bestLen = e - s; bestFrom = s; }
+                    s = e;
+                }
+                if (bestLen >= slices * 3 / 20)
+                {
+                    int armpit = bestFrom + bestLen - 1;
+                    for (int s = bestFrom; s <= armpit; s++)
+                        bodyReach[s] = MathF.Min(bodyReach[s], own[s]);
+                    for (int s = armpit + 1; s < roof && reach[s] > own[armpit] * 1.05f; s++)
+                        bodyReach[s] = MathF.Min(bodyReach[s], own[armpit]);
+                    HangingArms = true;
+                    Report += $"arms hang apart from the body from {(float)bestFrom / slices:P0} up to the armpits at {(armpit + 1f) / slices:P0} of the height\n";
+                }
             }
 
             ModelRegion = new int[pts.Length];
@@ -997,8 +1065,20 @@ namespace SkinTool
             Func<float, int> slice, Vector3 min, Vector3 size, Vector3 origin, float scale, Vector3 target)
         {
             var members = Enumerable.Range(0, pts.Length).Where(i => ModelRegion[i] == region).ToList();
+            // An arm hanging apart from the body, held well down from the shoulder (Kronk's A-pose), runs along its
+            // own slant, not sideways: its hand hangs and its fingers curl back in, so how far out sideways a point
+            // is says little about how far along the arm it is (the fingertips counted as the top of the arm and
+            // went to the shoulder, stretching into spikes). Its place along the arm is measured along that slant
+            // instead, from the top of the shoulder to the hand
+            float Out(int i) => MathF.Abs(pts[i].X - cx) - bodyReach(pts[i], slice((pts[i].Y - min.Y) / size.Y));
+            var top = members.OrderByDescending(i => pts[i].Y).Take(Math.Max(1, members.Count / 10)).ToList();
+            var armRoot = top.Aggregate(Vector3.Zero, (a, i) => a + pts[i]) / top.Count;
+            var slant = pts[members.MaxBy(Out)] - armRoot;
+            bool slanted = HangingArms && slant.LengthSquared() > 1e-8f && -slant.Y > 0.5f * slant.Length();
             float U(int i)
             {
+                if (slanted)
+                    return Math.Clamp(Vector3.Dot(pts[i] - armRoot, slant) / slant.LengthSquared(), 0, 1);
                 float root = bodyReach(pts[i], slice((pts[i].Y - min.Y) / size.Y));
                 return Math.Clamp((MathF.Abs(pts[i].X - cx) - root) / MathF.Max(tipOf(), 1e-4f), 0, 1);
             }
@@ -1006,7 +1086,7 @@ namespace SkinTool
             float tipOf()
             {
                 if (tipCache < 0)
-                    tipCache = members.Max(i => MathF.Abs(pts[i].X - cx) - bodyReach(pts[i], slice((pts[i].Y - min.Y) / size.Y)));
+                    tipCache = slanted ? slant.Length() : members.Max(i => MathF.Abs(pts[i].X - cx) - bodyReach(pts[i], slice((pts[i].Y - min.Y) / size.Y)));
                 return tipCache;
             }
 
@@ -1071,10 +1151,11 @@ namespace SkinTool
                 int b0 = Math.Clamp((int)MathF.Floor(fb), 0, bins - 1), b1 = Math.Min(bins - 1, b0 + 1);
                 var mid = Vector3.Lerp(middle[b0], middle[b1], Math.Clamp(fb - b0, 0, 1));
                 var offset = Positions[i] - mid;
-                offset.X = 0; // the arm's length is the fighter's now; keep only its thickness
-                // the model's arm runs sideways; where the fighter's points down (Ganondorf's hang at his sides)
-                // the thickness turns with it, or the arm would be squashed flat along its own length
-                var across = new Vector3(MathF.Sign(Positions[i].X - cx), 0, 0);
+                // the model's arm runs sideways (or down its slant); where the fighter's points down (Ganondorf's
+                // hang at his sides) the thickness turns with it, or the arm would be squashed flat along its own length
+                var across = slanted ? Vector3.Normalize(slant) : new Vector3(MathF.Sign(Positions[i].X - cx), 0, 0);
+                // the arm's length is the fighter's now; keep only its thickness
+                offset -= Vector3.Dot(offset, across) * across;
                 var to = Direction(u);
                 var axis = Vector3.Cross(across, to);
                 if (hangs && axis.LengthSquared() > 1e-8f)
