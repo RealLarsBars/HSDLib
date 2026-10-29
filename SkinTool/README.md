@@ -220,6 +220,13 @@ A separate piece whose open end sits inside another without touching it (a leg's
 in a sleeve, a neck in a collar) comes out of it when the two follow different bones. Where most of such an
 open end lies within 6% of the height of another piece that moves differently, it takes that piece's weights,
 easing back into its own over a short way (`tucked:` in the report), so it goes where the other piece goes.
+The same goes for two other kinds of piece that have no open end:
+- a closed piece pushed into another closed piece (an arm stuck into the body): its points inside the other;
+- a piece of the head that reaches down below the head line onto the body (Rex's head and long neck are one
+  piece, sitting on top of his body): its points below the line within 3% of the height of a body piece. It
+  followed the head bone right down to the chest before, so on a fighter with a long bendy neck (Yoshi) the
+  whole neck lifted off the body and the head floated away in neutral B and the up throw.
+
 `--attach no` turns this off too.
 
 ## Legs pressed together
