@@ -36,7 +36,9 @@ What `build` does, in the order the usual Blender + HSDRaw tutorial does it by h
    down beside the body, apart from it (Kronk's A-pose), never stick out past its outline, so they're found
    in cuts across the model instead: an outline of their own on each side of the body's, over a good
    stretch of the height. They are arms from the top of the shoulder down, and their place along the arm
-   is measured down their own slant, so a hand whose fingers curl back in still bends at the wrist. Weights are smoothed over the surface, cut to
+   is measured down their own slant, so a hand whose fingers curl back in still bends at the wrist. Their hands
+   follow the fighter's finger joints half way past the wrist, so an open hand closes a little when the
+   fighter makes a fist instead of staying a stiff flat paddle (in full, a big open hand folded into a box). Weights are smoothed over the surface, cut to
    3 per vertex and normalized. Small separate pieces (claws, teeth, whiskers) move as one piece with
    the body around them. Above the neck everything follows the head alone (see Head below).
 3. **Import**: one mesh per texture, CMP textures (RGB5A3 when they have transparency), triangle strips.
@@ -194,6 +196,23 @@ feet (Monty, Gusteau) aren't clothes over legs.
   in big kicks.
 
 `--legs body` treats the model as having no legs instead.
+
+## Skirts on fighters whose legs part low
+
+Some fighters swing their thighs from hip joints well above where their legs visibly part (Ganondorf, under
+his tabard). A model whose legs show only below a skirt or kilt (Kronk's) has its leg tops lined up with where
+the fighter's legs part, so in a kick its thigh swung out from under the skirt, which stayed with the hips,
+and the leg came off the body. When the fighter's hips sit more than 12% of its height above where its legs
+part, the model from its crotch up to the hip joints is worn over the legs like clothes (`skirt:` in the
+report): it follows the hips at the top and the thighs more and more towards the hem.
+
+## Ends tucked into another piece
+
+A separate piece whose open end sits inside another without touching it (a leg's top up under a skirt, a hand
+in a sleeve, a neck in a collar) comes out of it when the two follow different bones. Where most of such an
+open end lies within 6% of the height of another piece that moves differently, it takes that piece's weights,
+easing back into its own over a short way (`tucked:` in the report), so it goes where the other piece goes.
+`--attach no` turns this off too.
 
 ## Legs pressed together
 
