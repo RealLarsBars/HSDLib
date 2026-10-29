@@ -159,6 +159,9 @@ namespace SkinTool
         private bool LegsPressed;
         // per model position: part of clothes worn over the legs (null: none)
         public bool[] ClothesOver;
+        // the clothes run up to the fighter's hip joints (a skirt on a fighter whose legs part low): they ease in
+        // from none of the legs there, where they meet the body above
+        private bool SkirtToHips;
         // per model position: on the legs under those clothes
         private bool[] ClothesUnder;
         // the hips' bone and the two thigh bones (lle, rle), and whether lle is the +x one
@@ -179,6 +182,10 @@ namespace SkinTool
 
         // those of them bent down to hang along a fighter whose arms hang (Ganondorf)
         private readonly HashSet<int> Hung = new();
+        // per hung arm: the fighter's hand joint, and how far along the arm (0 to 1) its wrist is
+        private readonly Dictionary<int, (int Bone, float At)> Wrist = new();
+        // fingers follow the fighter's finger joints only half way: in full, a big open hand folded into a box
+        const float FingerShare = 0.5f;
         // arms found hanging apart from the body, beside it (Kronk's), rather than sticking out from it
         private bool HangingArms;
 
@@ -831,6 +838,34 @@ namespace SkinTool
                     if (!inShape[i])
                         ModelRegion[i] = ModelRegion[shapeIdx.MinBy(j => Vector3.DistanceSquared(pts[i], pts[j]))];
 
+            // A fighter whose legs part well below its hip joints (Ganondorf, under his tabard) swings its thighs
+            // from up there. A model whose legs show only below a skirt or kilt (Kronk's) has its leg tops lined
+            // up with where the fighter's legs part, but the skirt above them went with the hips alone: in a kick
+            // the thigh swung out from under it and the leg came off the body. The skirt, from the hem up to the
+            // hip joints, is worn over the legs: it takes them along as clothes do
+            if (ClothesOver == null && !stubby && !coat && !opt.Dress && legSide == null && opt.Legs == "auto" && opt.Clothes == "outside"
+                && opt.Roles != null && new[] { "lle", "rle" }.All(opt.Roles.ContainsKey))
+            {
+                float hip = ((skeleton.Position(opt.Roles["lle"]).Y + skeleton.Position(opt.Roles["rle"]).Y) / 2 - fighter.Min.Y) / fighterSize.Y;
+                float skirtTop = modelCrotch + (hip - fighterCrotch) / (1 - fighterCrotch) * (1 - modelCrotch);
+                if (hip - fighterCrotch > 0.12f)
+                {
+                    var skirt = new bool[pts.Length];
+                    for (int i = 0; i < pts.Length; i++)
+                    {
+                        float t = (pts[i].Y - min.Y) / size.Y;
+                        skirt[i] = ModelRegion[i] == Body && t >= modelCrotch && t <= skirtTop;
+                    }
+                    if (skirt.Any(b => b))
+                    {
+                        ClothesOver = skirt;
+                        ClothesUnder = new bool[pts.Length];
+                        SkirtToHips = true;
+                        Report += $"skirt: the fighter's legs part at {fighterCrotch:P0} of its height but swing from its hips at {hip:P0}; the model from its crotch up to {skirtTop:P0} goes with the legs as clothes over them\n";
+                    }
+                }
+            }
+
             // the fighter's body outline at each height, to line the two bodies' sides up
             float fcx = (fighter.Min.X + fighter.Max.X) / 2;
             var fighterReach = new float[slices];
@@ -899,6 +934,8 @@ namespace SkinTool
                     var dir = Vector3.Normalize(chain[^1] - chain[^2]);
                     chain.Add(chain[^1] + dir * (past / MathF.Max(MathF.Abs(dir.X), 0.3f)));
                     ConformArm(region, chain, pts, cx, (q, s) => bodyReach[s], Slice, min, size, origin, scale, target);
+                    if (Hung.Contains(region))
+                        Wrist[region] = (ha, Vector3.Distance(chain[0], chain[^2]) / MathF.Max(Enumerable.Range(1, chain.Count - 1).Sum(k => Vector3.Distance(chain[k - 1], chain[k])), 1e-4f));
                     Conformed.Add(region);
                     Report += $"{RegionNames[region]}: moved onto the fighter's arm\n";
                     continue;
@@ -1642,6 +1679,40 @@ namespace SkinTool
                 w[i] = acc;
             });
 
+            // 1a. a hand hung along the fighter's arm (Kronk's open hand) bends its fingers with the fighter's finger
+            // joints, which close into a fist or a grip: on the hand joint alone it stayed a stiff flat paddle in
+            // every move. Only arms found hanging apart from the body: other skins keep their hands as they were
+            if (HangingArms)
+                foreach (var (region, wrist) in Wrist)
+                {
+                    int hand = wrist.Bone;
+                    var fingers = Enumerable.Range(0, fv.Count).Where(k => fv[k].Bones.Any(b => IsAncestor(Skel, hand, b))).ToArray();
+                    if (fingers.Length == 0)
+                        continue;
+                    for (int i = 0; i < n; i++)
+                    {
+                        if (ModelRegion[i] != region || ArmLookup[i] == null)
+                            continue;
+                        float k = FingerShare * SmoothStep(wrist.At, wrist.At + 0.5f * (1 - wrist.At), ArmU[i]);
+                        if (k <= 0)
+                            continue;
+                        var acc = new float[boneCount];
+                        foreach (int f in fingers.OrderBy(f => Vector3.DistanceSquared(Lookup[i], fv[f].Position)).Take(opt.Neighbours))
+                        {
+                            float iw = 1f / (Vector3.DistanceSquared(Lookup[i], fv[f].Position) + 1e-4f);
+                            for (int b = 0; b < fv[f].Bones.Length; b++)
+                            {
+                                int bone = fv[f].Bones[b];
+                                acc[bone == hand || IsAncestor(Skel, hand, bone) ? bone : Remap[bone]] += fv[f].Weights[b] * iw;
+                            }
+                        }
+                        Normalize(acc);
+                        for (int b = 0; b < boneCount; b++)
+                            w[i][b] = (1 - k) * w[i][b] + k * acc[b];
+                    }
+                    Report += $"{RegionNames[region]}: the hand bends with the fighter's fingers\n";
+                }
+
             // 1b. limbs that don't line up with the fighter's partly stay with the body around them
             for (int region = 0; region < LimbFollow.Length; region++)
             {
@@ -1915,7 +1986,10 @@ namespace SkinTool
             // 3d. pieces that touch (a sleeve on a shirt, a leg in a pair of shorts) take the same weights
             // where they meet, so the join can't open up in any pose; the weights around it ease into that
             if (opt.Attach)
+            {
                 Attach(w, adj, boneCount, model.Triangles);
+                Tuck(w, boneCount, model.Triangles);
+            }
 
             // 4. keep the strongest few influences, as the game expects
             Weights = new SkinBuilder.Influence[n][];
@@ -2052,7 +2126,7 @@ namespace SkinTool
                 var p = Positions[i];
                 // down the clothes: the hips at the waist, mostly the thighs at the hem
                 float down = Math.Clamp((top - p.Y) / MathF.Max(top - hem, 1e-4f), 0, 1);
-                float legs = 0.35f + 0.6f * down;
+                float legs = SkirtToHips ? 0.95f * SmoothStep(0, 1, down) : 0.35f + 0.6f * down;
                 // across: the side over a leg follows it most, the middle both alike
                 float side = 0.5f + 0.45f * Math.Clamp((p.X - mid) / (half * 0.6f), -1, 1);
                 w[i] = new float[boneCount];
@@ -2159,6 +2233,101 @@ namespace SkinTool
             Smooth(w, adj, boneCount, 2, i => near.Contains(i) && !seam.Contains(i));
             Weld();
             Report += $"kept {pairs.Count} points where pieces touch attached\n";
+        }
+
+        /// <summary>
+        /// A piece whose open end is tucked into another without touching it (Kronk's legs, open tubes ending
+        /// up under his skirt; a hand in a sleeve, a neck in a collar) came out of it when the two followed
+        /// different bones: in a kick his thigh swung its top out from under the skirt and the leg hung off the
+        /// body. The open end takes the weights of the nearest point of the piece it's tucked into, easing back
+        /// into its own over a short way, so the end stays where the other piece goes and can't show.
+        /// </summary>
+        private void Tuck(float[][] w, int boneCount, List<ObjModel.Triangle> triangles)
+        {
+            int n = Positions.Length;
+            var edges = new Dictionary<(int, int), int>();
+            var outline = new bool[n];
+            foreach (var t in triangles)
+            {
+                var c = new[] { t.A.Position, t.B.Position, t.C.Position };
+                for (int k = 0; k < 3; k++)
+                {
+                    var e = (Math.Min(c[k], c[(k + 1) % 3]), Math.Max(c[k], c[(k + 1) % 3]));
+                    edges[e] = edges.GetValueOrDefault(e) + 1;
+                    if (t.Outline) outline[c[k]] = true;
+                }
+            }
+            bool Joinable(int i) => !RigidPart[i] && !Tail[i] && !outline[i];
+            var open = new bool[n];
+            foreach (var (e, count) in edges)
+                if (count == 1)
+                    open[e.Item1] = open[e.Item2] = true;
+            var ends = Enumerable.Range(0, n).Where(i => open[i] && Joinable(i)).ToList();
+            if (ends.Count == 0)
+                return;
+            float tall = Positions.Max(q => q.Y) - Positions.Min(q => q.Y);
+            float reach = 0.06f * tall;
+            // the other pieces' points in a grid as wide as the reach
+            var grid = new Dictionary<(int, int, int), List<int>>();
+            (int, int, int) Cell(Vector3 p) => ((int)MathF.Floor(p.X / reach), (int)MathF.Floor(p.Y / reach), (int)MathF.Floor(p.Z / reach));
+            for (int i = 0; i < n; i++)
+                if (Joinable(i) && !open[i])
+                {
+                    var c = Cell(Positions[i]);
+                    if (!grid.TryGetValue(c, out var list)) grid[c] = list = new List<int>();
+                    list.Add(i);
+                }
+            float Differ(float[] a, float[] b) => a.Zip(b, (x, y) => MathF.Abs(x - y)).Sum() / 2;
+            var into = new Dictionary<int, int>();
+            foreach (int i in ends)
+            {
+                var (cx, cy, cz) = Cell(Positions[i]);
+                int best = -1;
+                float bestD = reach * reach;
+                for (int x = cx - 1; x <= cx + 1; x++)
+                    for (int y = cy - 1; y <= cy + 1; y++)
+                        for (int z = cz - 1; z <= cz + 1; z++)
+                            if (grid.TryGetValue((x, y, z), out var list))
+                                foreach (int j in list)
+                                {
+                                    if (Part[j] == Part[i]) continue;
+                                    float d = Vector3.DistanceSquared(Positions[i], Positions[j]);
+                                    if (d < bestD) { bestD = d; best = j; }
+                                }
+                // only where the two move apart: following other bones by a good share
+                if (best >= 0 && Differ(w[i], w[best]) > 0.25f)
+                    into[i] = best;
+            }
+            // a piece's end counts as tucked when most of its open edge is (a whole leg top, not one point of a hem
+            // that happens to pass near the body)
+            var byPart = into.Keys.GroupBy(i => Part[i]).Where(g => g.Count() >= 0.5f * ends.Count(e => Part[e] == g.Key) && g.Count() >= 3).SelectMany(g => g).ToList();
+            if (byPart.Count == 0)
+                return;
+            var target = byPart.ToDictionary(i => i, i => (float[])w[into[i]].Clone());
+            // eased back into the piece's own weights over a little more than the gap, up to a tenth of the height
+            var parts = byPart.Select(i => Part[i]).ToHashSet();
+            int eased = 0;
+            for (int i = 0; i < n; i++)
+            {
+                if (!parts.Contains(Part[i]) || !Joinable(i))
+                    continue;
+                int end = -1;
+                float d2 = float.MaxValue;
+                foreach (int e in byPart)
+                    if (Part[e] == Part[i])
+                    {
+                        float d = Vector3.DistanceSquared(Positions[i], Positions[e]);
+                        if (d < d2) { d2 = d; end = e; }
+                    }
+                float span = MathF.Max(2 * Vector3.Distance(Positions[end], Positions[into[end]]), 0.04f * tall);
+                float k = 1 - SmoothStep(0, MathF.Min(span, 0.1f * tall), MathF.Sqrt(d2));
+                if (k <= 0)
+                    continue;
+                for (int b = 0; b < boneCount; b++)
+                    w[i][b] = (1 - k) * w[i][b] + k * target[end][b];
+                eased++;
+            }
+            Report += $"tucked: {byPart.Count} points of {parts.Count} pieces end inside another piece; {eased} points ease into its weights, so they can't come out of it\n";
         }
 
         private void Smooth(float[][] w, HashSet<int>[] adj, int boneCount, int passes, Func<int, bool> include)
