@@ -58,7 +58,9 @@ only one is kept: the one not named for cutscenes, or else the first.
 **Legs.** A model with no real legs (a round body on little feet) is found from its shape. Its body
 works as legs: the bottom 30% (`--leg-band`) bends with the fighter's legs, left half with the left
 leg, fading into the hips towards the top, the middle and the back. It's sized to 75% of the
-fighter's height. Arms far below the fighter's mostly stay with the body. Small openings (the open
+fighter's height. Arms far below the fighter's mostly stay with the body. A slim model whose legs
+show only below a long coat (Linguini) isn't legless: its legs run up to the fighter's hips under the
+coat, as under Zelda's and Peach's dresses. Small openings (the open
 bases of claws and teeth) are closed, and every mesh is drawn from both sides, so bending never
 shows holes.
 
@@ -67,7 +69,9 @@ fighter's arms. The tool looks for a neck: a narrow spot in the upper half with 
 least half as wide again and as wide as the body. Everything above that line follows the fighter's
 head bone alone, blending in over a short band, so the head and face move as one piece. `--neck 0.6`
 sets the line by hand (a share of the model's height), `--neck none` turns it off. The size check
-(`--overlay`) draws the line dashed in yellow.
+(`--overlay`) draws the line dashed in yellow. A head that is a piece of its own on top of the model,
+above the fighter's shoulders (Linguini's, sunk in a high collar), follows the head bone too, and so do
+the hat and hair sitting on it.
 
 **Stretch check.** With `--fighter` and `--anims`, a build poses the first costume in the fighter's
 test moves and measures how far each triangle's longest edge grows. When more than 2.5% of the skin's
@@ -86,7 +90,8 @@ Peach's items and Ganondorf's sword stay hidden. `portrait <out.png> <costume.da
 line or in a `skin.txt` next to the OBJ (or in the zip):
 
 ```
-legs = body       # auto | separate | body | cut (cut: two legs down the fighter's legs)
+legs = body       # auto | separate | body | cut | dress (cut: two legs down the fighter's legs;
+                  #   dress: the legs run up to the hips under a long coat or dress)
 arms = auto       # auto | fighter (always onto the fighter's arms) | body
 neck = auto       # auto | none | 0.6 (where the head starts, as a share of the height)
 scale = 1.1
@@ -167,7 +172,8 @@ into the face in place of its own, and the eyelashes of the other expressions ar
 A model made of separate pieces (a shirt with the arms as their own meshes, legs inside a pair of shorts)
 keeps them joined: where a point of one piece touches another (within 1% of the model's size), both sides
 take the same weights, and the weights around the join ease into them, so the join can't open in any pose.
-Small details that move as one piece (buttons, claws) and tails are left alone. `--attach no` (or
+Small details that move as one piece (buttons, claws) and tails are left alone. A body piece keeps its
+shape (BMO's box) unless it carries the arms: a coat with its sleeves bends at the shoulders and elbows. `--attach no` (or
 `attach = no` in skin.txt) turns it off, for loose pieces meant to swing on their own.
 
 ## Tail
