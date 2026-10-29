@@ -20,6 +20,7 @@ namespace SkinTool
 skintool models <zip|folder> --out <folder>
 skintool weapons <costume.dat>
 skintool stretch <costume.dat> <Pl**.dat> <Pl**AJ.dat>
+skintool gap <costume.dat> <original.dat> <Pl**.dat> <Pl**AJ.dat> [<out.png>]
 skintool compare <out.png> <old.dat> <new.dat> <Pl**.dat> <Pl**AJ.dat> [--original <costume.dat>]
 skintool portrait <out.png> <costume.dat> <Pl**.dat> <Pl**AJ.dat> [--anim Wait1] [--at 0] [--yaw -30]
 skintool inspect <costume.dat>
@@ -71,6 +72,8 @@ build    Swaps the model into every costume given, keeping each costume's skelet
          line printed it) or a spot on the overlay or part map (front:x,y, x past 320 is the side view), then
          = body, head, arm, leg or tail, and @reach how far around it along the surface (a share of the
          height, 0.25 by default; only over points found in the same part as the spot).
+         --check-picture draws the move a check warns about (pieces coming apart), the skin beside the
+         character, when there is one.
          --pick chooses the model when a zip or folder holds more than one.
          --weapon swaps one of the fighter's weapons (pan, sword, hammer; see weapons) for another model,
          fitted over the original; --weapon-flip turns it end for end. Weapons not given keep the costume's own.
@@ -85,7 +88,9 @@ stretch  Poses a finished costume in the fighter's moves and warns about parts t
          (build does the same whenever it has --anims and --fighter).
 compare  Draws two builds of a skin (and the original costume, with --original) in the fighter's test
          poses, one row each, and says how much of the picture changed and how the checks moved
-         (stretch, thin, floor), to see what a change to skintool did to a skin.
+         (stretch, thin, floor, gap), to see what a change to skintool did to a skin.
+gap      Whether separate pieces of a finished costume come apart in the fighter's moves (how far, and
+         where); with <out.png>, draws that pose, the skin beside the original costume.
 inspect  Lists a costume's joints and meshes.
 check    Compares a finished skin with the original costume, as the build does.
 preview  Renders each costume in a few test poses, one row per costume.
@@ -127,6 +132,16 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
                     case "weapons": return ListWeapons(args[1]);
                     case "stretch": return Stretch(args);
                     case "compare": return Compare(args);
+                    case "gap":
+                        {
+                            var data = Slots.Load(args[3]);
+                            var all = Animations.Load(args[3], args[4], Animations.AllPoses(args[3], 0, 0.5f));
+                            var (gap, pose, bone) = Preview.GapCheck(args[1], data, all);
+                            Console.WriteLine(FormattableString.Invariant($"gap check: pieces open up to {gap:P1} of the height") + (pose != null ? $" (in {pose.Name}, the piece on bone {bone})" : ""));
+                            if (pose != null && args.Length > 5)
+                                Preview.PoseSheet(args[1], args[2], data, pose, args[5]);
+                            return 0;
+                        }
                     case "portrait": return Portrait(args);
                     default:
                         Console.WriteLine(Usage);
@@ -454,7 +469,7 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
 
         static int Build(string[] args)
         {
-            string model = null, outDir = null, fighterDat = null, previewPng = null, animDat = null, pick = null, overlayPng = null, portraitDir = null, partsPng = null;
+            string model = null, outDir = null, fighterDat = null, previewPng = null, animDat = null, pick = null, overlayPng = null, portraitDir = null, partsPng = null, checkPng = null;
             bool fitOnly = false;
             var weaponFiles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var weaponPicks = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -497,6 +512,7 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
                     case "--overlay": overlayPng = Next(); break;
                     case "--fit-only": fitOnly = true; break;
                     case "--parts": partsPng = Next(); break;
+                    case "--check-picture": checkPng = Next(); break;
                     case "--part": (opt.PartFixes ??= new()).Add(AutoRig.PartFix.Parse(Next())); break;
                     case "--portraits": portraitDir = Next(); break;
                     case "--weapon":
@@ -582,7 +598,23 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
                     if (animDat == null || fighterDat == null || fitOnly)
                         return null;
                     var poses = Animations.Load(fighterDat, animDat, Animations.TestPoses);
-                    return Preview.StretchCheck(Path.Combine(outDir, Path.GetFileName(dats[0])), Slots.Load(fighterDat), poses, stretchSaid.Add);
+                    var skin = Path.Combine(outDir, Path.GetFileName(dats[0]));
+                    var data = Slots.Load(fighterDat);
+                    var stretch = Preview.StretchCheck(skin, data, poses, stretchSaid.Add);
+                    // pieces coming apart (a head lifting off its neck), over all the fighter's moves
+                    var all = Animations.Load(fighterDat, animDat, Animations.AllPoses(fighterDat, 0, 0.5f));
+                    var (gap, pose, bone) = Preview.GapCheck(skin, data, all);
+                    stretchSaid.Add(FormattableString.Invariant($"gap check: pieces open up to {gap:P1} of the height") + (pose != null ? $" (in {pose.Name})" : ""));
+                    if (gap >= Preview.GapWarn)
+                    {
+                        if (checkPng != null)
+                        {
+                            Preview.PoseSheet(skin, dats[0], data, pose, checkPng);
+                            stretchSaid.Add($"check picture: {checkPng} ({pose.Name}: the skin, front and side, then the character)");
+                        }
+                        stretchSaid.Add(FormattableString.Invariant($"warning: a piece of the skin moves {gap:P0} of the height away from the piece it touches (worst in {pose.Name}). If it looks like it's coming off in that move, try Keep parts attached, or a part fix on the Parts map."));
+                    }
+                    return stretch;
                 });
 
                 // a character select portrait of each costume, next to it (PlFxNr_csp.png) and in --portraits
@@ -643,6 +675,8 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
             var all = Animations.Load(args[2], args[3], Animations.AllPoses(args[2], 0, 0.25f, 0.5f, 0.75f));
             var (share, pose, bone) = Preview.ThinCheck(args[1], Slots.Load(args[2]), all);
             Console.WriteLine(FormattableString.Invariant($"thin check: {share:P1} of the skin's points squashed to under {Preview.ThinLimit:0%} of their depth in some of {all.Count} poses") + (pose != null ? $" (most in {pose}, mostly on bone {bone})" : ""));
+            var (gap, gapPose, gapBone) = Preview.GapCheck(args[1], Slots.Load(args[2]), all);
+            Console.WriteLine(FormattableString.Invariant($"gap check: pieces open up to {gap:P1} of the height") + (gapPose != null ? $" (in {gapPose.Name}, the piece on bone {gapBone})" : ""));
             return 0;
         }
 
@@ -693,7 +727,8 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
                 var (thin, _, _) = Preview.ThinCheck(dat, fighter, all);
                 var floor = Preview.FloorDepth(dat, fighter, low);
                 float deepest = floor.Count > 0 ? floor.Min(f => f.Low) : 0;
-                Console.WriteLine(FormattableString.Invariant($"{name}: stretch {stretch ?? "ok"}; thin {thin:P1}; floor {deepest:0.0}"));
+                var (gap, _, _) = Preview.GapCheck(dat, fighter, all);
+                Console.WriteLine(FormattableString.Invariant($"{name}: stretch {stretch ?? "ok"}; thin {thin:P1}; floor {deepest:0.0}; gap {gap:P1}"));
             }
             return 0;
         }

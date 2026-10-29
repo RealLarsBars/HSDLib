@@ -294,3 +294,30 @@ model, at heights where it reaches much further back than usual, follows the fig
 root to tip (Fox, Falco, Pikachu, Pichu, Mewtwo, Yoshi; `BoneMaps.Tails`), blending in from the body at
 the root. Without it, everything behind the model follows the body, as before.
 
+
+## Parts by hand
+
+`--parts map.png` draws the fitted model with each point coloured by the part it went in: head
+(yellow), body (grey), arms (green), legs (blue), tail (purple), clothes over the legs (orange). When one
+is wrong, `--part` puts a spot in another part: `--part front:212,140=arm` (a spot on the map or the size
+check, x past 320 being the side view) or `--part 4512=head` (a model point). The build prints which point
+a clicked spot is (`part fix: front:212,140=arm@0.25 is point 4512`), so the panel keeps the point and the
+fix stays on the same spot when the fit changes. A fix spreads along the surface around the spot (`@0.25`,
+a share of the height) over the points found in the same part as the spot, and wins over everything the
+fit decides. A tail fix turns the tail on.
+
+## Checks
+
+Each build with `--anims` runs the stretch check (triangles pulled to more than 4x) and the gap check:
+separate pieces that touch in the bind pose and move apart in the fighter's moves (Rex's head off his
+neck, Kronk's legs out of his skirt). Over 45% of the height it warns, and `--check-picture` draws the
+worst move, the skin beside the character. `skintool gap` runs it on a finished costume.
+
+## Regression run
+
+`tests/regress.sh <old skintool> <new skintool> <fighters> <models> <work>` rebuilds the skins in
+`tests/cases.txt` (past skins, with the settings they were built with) with both and says which changed.
+Builds are repeatable, so "same" means byte for byte; a changed one gets a picture (rows: old, new, the
+character) and `skintool compare`'s numbers. Run it before every SkinTool change. The models are in the
+project's files (skins/tests/models); Top-8er keeps the smaller ones in test/skins/models for its
+skintool-bump workflow.

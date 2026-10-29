@@ -534,6 +534,139 @@ namespace SkinTool
         }
 
         /// <summary>
+        /// Whether separate pieces of the skin come apart in the fighter's moves: a head that lifts off its neck
+        /// (Rex's), legs that leave the body (Kronk's, under his skirt). Pieces are what isn't joined by triangles
+        /// (points at the same spot count as joined). Where two pieces touch in the bind pose (points within
+        /// 1.5% of the height), how far the closest such pair moves apart is the opening; the worst opening over
+        /// the poses, as a share of the height, with the pose and the bone the piece that moves most follows.
+        /// </summary>
+        public static (float Opening, Pose Pose, int Bone) GapCheck(string dat, HSDRaw.Melee.Pl.SBM_FighterData fighter, List<Pose> poses)
+        {
+            var file = new HSDRawFile(dat);
+            var sk = new Skeleton((HSD_JOBJ)file.Roots[0].Data);
+            var hidden = fighter != null ? Slots.HiddenByDefault(fighter) : new HashSet<int>();
+            var weaponSlots = fighter != null ? Weapons.AllSlots(fighter, BoneMaps.Code(dat)) : new HashSet<int>();
+            var tris = Decode(sk).Where(t => !hidden.Contains(t.Slot) && !weaponSlots.Contains(t.Slot)).ToList();
+            if (tris.Count == 0)
+                return (0, null, -1);
+            var verts = tris.SelectMany(t => new[] { t.A, t.B, t.C }).Distinct().ToList();
+            var index = verts.Select((v, i) => (v, i)).ToDictionary(e => e.v, e => e.i);
+            float minY = verts.Min(v => v.Pos.Y), height = MathF.Max(verts.Max(v => v.Pos.Y) - minY, 1e-4f);
+
+            // pieces: joined by triangles, and by points at the same spot
+            var parent = Enumerable.Range(0, verts.Count).ToArray();
+            int Find(int x) { while (parent[x] != x) x = parent[x] = parent[parent[x]]; return x; }
+            void Join(int a, int b) { a = Find(a); b = Find(b); if (a != b) parent[Math.Max(a, b)] = Math.Min(a, b); }
+            foreach (var t in tris)
+            {
+                Join(index[t.A], index[t.B]);
+                Join(index[t.B], index[t.C]);
+            }
+            var spot = new Dictionary<(int, int, int), int>();
+            for (int i = 0; i < verts.Count; i++)
+            {
+                var p = verts[i].Pos / height * 2000;
+                var key = ((int)MathF.Round(p.X), (int)MathF.Round(p.Y), (int)MathF.Round(p.Z));
+                if (spot.TryGetValue(key, out int other)) Join(i, other); else spot[key] = i;
+            }
+
+            // pairs of points of different pieces close together at bind: per pair of pieces, its closest pairs
+            float near = 0.015f * height;
+            var grid = new Dictionary<(int, int, int), List<int>>();
+            (int, int, int) Cell(Vector3 p) => ((int)MathF.Floor(p.X / near), (int)MathF.Floor(p.Y / near), (int)MathF.Floor(p.Z / near));
+            for (int i = 0; i < verts.Count; i++)
+            {
+                var c = Cell(verts[i].Pos);
+                if (!grid.TryGetValue(c, out var l)) grid[c] = l = new List<int>();
+                l.Add(i);
+            }
+            var pairs = new Dictionary<(int, int), List<(int A, int B, float D)>>();
+            for (int i = 0; i < verts.Count; i++)
+            {
+                var (cx, cy, cz) = Cell(verts[i].Pos);
+                for (int dx = -1; dx <= 1; dx++)
+                    for (int dy = -1; dy <= 1; dy++)
+                        for (int dz = -1; dz <= 1; dz++)
+                        {
+                            if (!grid.TryGetValue((cx + dx, cy + dy, cz + dz), out var l)) continue;
+                            foreach (int j in l)
+                            {
+                                if (j <= i) continue;
+                                int a = Find(i), b = Find(j);
+                                if (a == b) continue;
+                                float d = Vector3.Distance(verts[i].Pos, verts[j].Pos);
+                                if (d > near) continue;
+                                var key = (Math.Min(a, b), Math.Max(a, b));
+                                if (!pairs.TryGetValue(key, out var list)) pairs[key] = list = new();
+                                list.Add((i, j, d));
+                            }
+                        }
+            }
+            if (pairs.Count == 0)
+                return (0, null, -1);
+            // the closest few of each pair of pieces: one stray pair says little, the closest ones say where they meet
+            var watched = pairs.ToDictionary(kv => kv.Key, kv => kv.Value.OrderBy(e => e.D).Take(12).ToList());
+
+            float worst = 0;
+            Pose worstPose = null;
+            int worstBone = -1;
+            foreach (var pose in poses)
+            {
+                var skin = PosedSkinning(sk, pose);
+                Vector3 P(Vert v)
+                {
+                    var p = Vector3.Zero;
+                    for (int k = 0; k < v.Bones.Length; k++)
+                        p += Vector3.Transform(v.Pos, skin[v.Bones[k]]) * v.Weights[k];
+                    return p;
+                }
+                foreach (var (key, list) in watched)
+                {
+                    // the pieces stay together while any of their meeting points do
+                    float opening = list.Min(e => Vector3.Distance(P(verts[e.A]), P(verts[e.B])) - e.D) / height;
+                    if (opening > worst)
+                    {
+                        worst = opening;
+                        worstPose = pose;
+                        var e0 = list[0];
+                        var moved = new[] { e0.A, e0.B }.MaxBy(x => Vector3.Distance(P(verts[x]), verts[x].Pos));
+                        var v = verts[moved];
+                        worstBone = v.Bones[Array.IndexOf(v.Weights, v.Weights.Max())];
+                    }
+                }
+            }
+            return (worst, worstPose, worstBone);
+        }
+
+        // pieces opening further than this (a share of the height) are worth a look: the skins Alex reported came out
+        // at 54% (Kronk's legs) and 61% (Rex's head), their fixed versions under 3%. Pieces that only lie close
+        // (a hat brim on the shoulders) also open, so of the 31 regression skins BMO (50%) and Peach's gardener (92%,
+        // the hat) are flagged too, with the picture to judge by; the rest stay under 45%
+        public const float GapWarn = 0.45f;
+
+        /// <summary>
+        /// One pose drawn front and side, the skin beside the costume it came from, for a check's warning:
+        /// what came apart, next to how the fighter looks there.
+        /// </summary>
+        public static void PoseSheet(string skinDat, string originalDat, HSDRaw.Melee.Pl.SBM_FighterData fighter, Pose pose, string output)
+        {
+            const int cell = 320;
+            var sheet = new Bitmap(cell * 4, cell);
+            var hidden = fighter != null ? Slots.HiddenByDefault(fighter) : new HashSet<int>();
+            var drawn = new Bitmap[4];
+            var dats = new[] { skinDat, originalDat };
+            var models = dats.Select(d =>
+            {
+                var sk = new Skeleton((HSD_JOBJ)new HSDRawFile(d).Roots[0].Data);
+                return (sk, tris: Decode(sk).Where(t => !hidden.Contains(t.Slot)).ToList());
+            }).ToArray();
+            Parallel.For(0, 4, k => drawn[k] = Render(models[k / 2].sk, models[k / 2].tris, pose, k % 2 * 90f, cell));
+            for (int k = 0; k < 4; k++)
+                sheet.Draw(drawn[k], k * cell, 0);
+            sheet.SavePng(output);
+        }
+
+        /// <summary>
         /// The share of its volume a point keeps under a blend of bones (1 = as solid as the bones
         /// themselves, 0 = flat).
         /// </summary>

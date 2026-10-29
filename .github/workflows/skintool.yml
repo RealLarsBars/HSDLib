@@ -1,0 +1,23 @@
+# Builds skintool on every push and pull request that touches it, so a change that doesn't compile never
+# reaches Top-8er. The regression run (SkinTool/tests/regress.sh) needs the fighter files and test models,
+# which can't be public; Top-8er's skintool-bump workflow runs it before each version bump.
+name: skintool
+
+on:
+  push:
+    branches: [master]
+    paths: ["SkinTool/**", "HSDRaw/**", ".github/workflows/skintool.yml"]
+  pull_request:
+    paths: ["SkinTool/**", "HSDRaw/**", ".github/workflows/skintool.yml"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - run: dotnet build SkinTool -c Release
+      # the usage text prints and exits 1 with no arguments; anything else (a crash on start) fails the job
+      - run: dotnet SkinTool/bin/Release/net8.0/skintool.dll || [ $? -eq 1 ]

@@ -15,6 +15,7 @@ JOBS=${JOBS:-2}
 one() {
   name=$1; c=$2; model=$3; shift 3
   d=$(ls "$A/$c" | grep -m1 'Nr.dat')
+  [ -f "$M/$model" ] || { echo "$name: skipped (no $model in the models folder)"; return; }
   for v in old new; do
     if [ $v = old ]; then bin=$OLD; else bin=$NEW; fi
     rm -rf "$W/$name-$v"
