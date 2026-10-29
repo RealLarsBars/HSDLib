@@ -14,7 +14,7 @@ namespace SkinTool
         const string Usage =
 @"skintool build --model <model.obj/.fbx/.dae|model.zip> --dat <costume.dat> [--dat <costume.dat> ...] --out <folder|out.zip>
                [--fighter <Pl**.dat>] [--bones 41,22,...] [--scale 1.0] [--width 1.0] [--height 1.0] [--rotate 0 | x,y,z] [--move forward[,up]] [--textures <costume.dat>=<folder> ...]
-               [--legs auto|separate|body|cut|dress] [--clothes outside|legs] [--arms auto|fighter|body] [--neck auto|none|0.6] [--tail yes|no] [--attach yes|no] [--style normal|animelee] [--eyes <key>] [--leg-band 0.3] [--keep-shape]
+               [--legs auto|separate|body|cut|dress] [--clothes outside|legs] [--arms auto|fighter|body] [--neck auto|none|0.6 [--neck-tilt 0]] [--tail yes|no] [--attach yes|no] [--style normal|animelee] [--eyes <key>] [--leg-band 0.3] [--keep-shape]
                [--pick <model in the zip or folder>] [--weapon <name>=<model|zip> [--weapon-pick <name>=<model>] [--weapon-flip <name>] ...]
                [--preview <out.png> [--anims <Pl**AJ.dat>]] [--overlay <out.png> [--fit-only]] [--portraits <folder>]
 skintool models <zip|folder> --out <folder>
@@ -48,6 +48,8 @@ build    Swaps the model into every costume given, keeping each costume's skelet
          --arms fighter always moves its arms onto the fighter's, body keeps them mostly with the body.
          --neck is where the head starts, as a share of the model's height: everything above follows the
          head bone alone, so a wide head or face moves as one piece. auto finds a neck, none turns it off.
+         The line found leans with a head held tipped forward or back; --neck-tilt leans one set by hand,
+         in degrees (positive: lower at the front, for a head tipped forward; -45 to 45).
          --tail yes says the model has a tail: what sticks out behind it follows the fighter's tail bones
          (Fox, Falco, Pikachu, Pichu, Mewtwo, Yoshi); without it, everything behind follows the body.
          --attach (yes by default) keeps separate pieces that touch (a sleeve on a shirt) joined in every
@@ -196,6 +198,13 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
             return v >= 0.2f && v <= 0.95f ? v : throw new Exception($"neck must be auto, none or between 0.2 and 0.95, not {value}");
         }
 
+        // the neck line's lean in degrees, positive down at the front (-45 to 45)
+        static float NeckTilt(string value)
+        {
+            float v = float.Parse(value.Trim(), CultureInfo.InvariantCulture);
+            return v >= -45 && v <= 45 ? v : throw new Exception($"neck-tilt must be between -45 and 45 degrees, not {value}");
+        }
+
         static string Rule(string name, string value, params string[] allowed)
         {
             value = value.Trim().ToLowerInvariant();
@@ -236,9 +245,10 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
                     case "eyes": opt.Eyes = value; break;
                     case "leg-band": opt.LegBand = float.Parse(value, CultureInfo.InvariantCulture); break;
                     case "neck": opt.Neck = Neck(value); break;
+                    case "neck-tilt": opt.NeckTilt = NeckTilt(value); break;
                     case "tail": opt.HasTail = YesNo("tail", value); break;
                     case "attach": opt.Attach = YesNo("attach", value); break;
-                    default: throw new Exception($"skin.txt: unknown rule {name} (legs, arms, neck, tail, attach, style, eyes, scale, width, height, rotate, move, leg-band)");
+                    default: throw new Exception($"skin.txt: unknown rule {name} (legs, arms, neck, neck-tilt, tail, attach, style, eyes, scale, width, height, rotate, move, leg-band)");
                 }
                 Console.WriteLine($"rule from skin.txt: {name} = {value}");
             }
@@ -447,6 +457,7 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
                     case "--clothes": opt.Clothes = Rule("clothes", Next(), "outside", "legs"); break;
                     case "--arms": opt.Arms = Rule("arms", Next(), "auto", "fighter", "body"); break;
                     case "--neck": opt.Neck = Neck(Next()); break;
+                    case "--neck-tilt": opt.NeckTilt = NeckTilt(Next()); break;
                     case "--tail": opt.HasTail = YesNo("--tail", Next()); break;
                     case "--attach": opt.Attach = YesNo("--attach", Next()); break;
                     case "--leg-band": opt.LegBand = float.Parse(Next(), CultureInfo.InvariantCulture); break;
@@ -699,7 +710,7 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
             }
             Console.Write(rig.Report);
             if (overlayPng != null)
-                Preview.Overlay(dats[0], fighterData, obj, rig.Positions, overlayPng, rig.NeckY);
+                Preview.Overlay(dats[0], fighterData, obj, rig.Positions, overlayPng, float.IsNaN(rig.NeckY) ? null : rig.NeckYAt);
             if (fitOnly)
                 return;
 

@@ -81,8 +81,23 @@ shows holes.
 fighter's arms. The tool looks for a neck: a narrow spot in the upper half with a head above it at
 least half as wide again and as wide as the body. Everything above that line follows the fighter's
 head bone alone, blending in over a short band, so the head and face move as one piece. `--neck 0.6`
-sets the line by hand (a share of the model's height), `--neck none` turns it off. The size check
-(`--overlay`) draws the line dashed in yellow. A head that is a piece of its own on top of the model,
+sets the line by hand (a share of the model's height), `--neck none` turns it off.
+
+The line doesn't have to be level. Many models hold their head tipped forward or back, and a level
+line then takes the chin with the chest or the back of the chest with the head. The tool also cuts the
+model across at every height, leaning from -35 to 35 degrees, and measures the outline around the head's
+middle (ears and hair hanging beside the neck are separate outlines and left out): a neck is a narrow
+spot there with a clearly wider head above and body below. The cut then turns about the narrowest spot
+to cross the neck straight, leaning only when that is clearly smaller than level; it is one straight
+line, leaning all the way across. Only outlines around the model's middle are followed, so a hand or a
+sword held out at neck height can't pull the line onto itself. This also finds short necks under a head
+no wider than the body (Kermit's), which the front outline misses. A level neck found by the outline
+keeps its line as before; a model stood up with `--rotate` x/z (Spyro) keeps a level one; a tiny head
+sunk in a big collar (Gusteau's) gets no line, since it bends better with the body. `--neck-tilt 20`
+leans a line set by hand (degrees, positive lower at the front for a head tipped forward). The report
+says how the line leans (`head: everything above 79 % ... leaning 30 degrees down at the front`). Arms
+held out that reach well past the head stay arms above a low line. The size check (`--overlay`) draws
+the line dashed in yellow, leaning in the side view. A head that is a piece of its own on top of the model,
 above the fighter's shoulders (Linguini's, sunk in a high collar), follows the head bone too, and so do
 the hat and hair sitting on it.
 
@@ -108,6 +123,7 @@ legs = body       # auto | separate | body | cut | dress (cut: two legs down the
 clothes = outside # outside | legs (clothes found over the legs: one sheet over them, or split to follow each leg)
 arms = auto       # auto | fighter (always onto the fighter's arms) | body
 neck = auto       # auto | none | 0.6 (where the head starts, as a share of the height)
+neck-tilt = 0     # with neck set by hand: its lean in degrees, positive lower at the front
 scale = 1.1
 width = 1.0       # stretch sideways only
 height = 1.2      # stretch upwards only (from the floor)
