@@ -162,6 +162,8 @@ namespace SkinTool
 
         private int[] BoneRegion;
         private Skeleton Skel;
+        // the model's triangles, to find each position's normals
+        private List<ObjModel.Triangle> Corners;
 
         // arms moved onto the fighter's own arms (ConformArm): they bend where its arms bend
         private readonly HashSet<int> Conformed = new();
@@ -195,6 +197,7 @@ namespace SkinTool
             rig.RegionRemap ??= rig.Remap;
             rig.HeadBone = head;
             rig.Skel = skeleton;
+            rig.Corners = model.Triangles;
             rig.FighterRegions(fighter, skeleton, head, opt.Roles);
             if (opt.Roles != null && opt.Roles.TryGetValue("lsh", out int lsh) && opt.Roles.TryGetValue("rsh", out int rsh))
                 rig.ShoulderY = (skeleton.Position(lsh).Y + skeleton.Position(rsh).Y) / 2;
@@ -1140,7 +1143,7 @@ namespace SkinTool
         /// much further behind its middle than it usually does, what sticks out is tail. Its weights run
         /// along the fighter's tail bones by how far out each point is, blending in from the body at the root.
         /// </summary>
-        private void TailWeights(float[][] w, int boneCount, int[] chain)
+        private void TailWeights(float[][] w, int boneCount, int[] chain, bool bend)
         {
             int n = Positions.Length;
             float minY = Positions.Min(p => p.Y), maxY = Positions.Max(p => p.Y);
@@ -1177,9 +1180,12 @@ namespace SkinTool
             }
 
             float tip = tail.Max(i => cz - Positions[i].Z);
+            var along = tail.ToDictionary(i => i, i => Math.Clamp((cz - Positions[i].Z - root) / MathF.Max(tip - root, 1e-4f), 0, 1));
+            if (bend)
+                ConformTail(tail, along, chain, tip - root);
             foreach (var i in tail)
             {
-                float u = Math.Clamp((cz - Positions[i].Z - root) / MathF.Max(tip - root, 1e-4f), 0, 1);
+                float u = along[i];
                 float f = u * (chain.Length - 1);
                 int a = (int)MathF.Floor(f), b = Math.Min(a + 1, chain.Length - 1);
                 var own = new float[boneCount];
@@ -1191,6 +1197,97 @@ namespace SkinTool
                 Tail[i] = true;
             }
             Report += $"tail: {tail.Count} vertices behind the model follow the tail bones {string.Join(",", chain)}\n";
+        }
+
+        /// <summary>
+        /// A tail laid out straight behind (Remy's, along the floor) on a fighter whose tail runs another way
+        /// (Pikachu's goes up behind its back) is bent to run along the fighter's tail bones, from where it leaves
+        /// the body, keeping its own length and thickness. Left where it is, its tip is far from the bones it
+        /// follows: every flick swings it wide and down through the floor, and it never looks like the
+        /// fighter's tail. Tails that already run about the fighter's way (Fox's hangs down behind) are left alone,
+        /// and so are those of models stood up with --rotate (Spyro on all fours: his tail went stiff and flat).
+        /// </summary>
+        private void ConformTail(List<int> tail, Dictionary<int, float> along, int[] chain, float length)
+        {
+            if (Skel == null || chain.Length < 2 || length <= 0)
+                return;
+            var joints = chain.Select(j => Skel.Position(j)).ToList();
+            var fighterDir = Vector3.Normalize(joints[^1] - joints[0]);
+            // the model tail's middle line, in a few steps along it
+            const int bins = 8;
+            var sum = new Vector3[bins];
+            var count = new int[bins];
+            foreach (var i in tail)
+            {
+                int b = Math.Min(bins - 1, (int)(along[i] * bins));
+                sum[b] += Positions[i];
+                count[b]++;
+            }
+            var middle = new Vector3[bins];
+            for (int b = 0; b < bins; b++)
+                middle[b] = count[b] > 0 ? sum[b] / count[b] : Vector3.Zero;
+            for (int b = 1; b < bins; b++)
+                if (count[b] == 0) middle[b] = middle[b - 1];
+            for (int b = bins - 2; b >= 0; b--)
+                if (count[b] == 0) middle[b] = middle[b + 1];
+            var modelDir = middle[bins - 1] - middle[0];
+            if (modelDir.LengthSquared() < 1e-8f)
+                return;
+            modelDir = Vector3.Normalize(modelDir);
+            float angle = MathF.Acos(Math.Clamp(Vector3.Dot(modelDir, fighterDir), -1, 1));
+            if (angle < MathF.PI / 4)
+                return;
+
+            // the fighter's tail line from the model tail's root, and on past its last joint for a longer tail
+            var line = new List<Vector3> { middle[0] };
+            line.AddRange(joints.Skip(1).Select(j => j - joints[0] + middle[0]));
+            var lengths = new List<float> { 0 };
+            for (int k = 1; k < line.Count; k++)
+                lengths.Add(lengths[^1] + Vector3.Distance(line[k - 1], line[k]));
+            if (lengths[^1] < length)
+            {
+                line.Add(line[^1] + Vector3.Normalize(line[^1] - line[^2]) * (length - lengths[^1]));
+                lengths.Add(length);
+            }
+            (Vector3 at, Vector3 dir) Along(float d)
+            {
+                int k = 1;
+                while (k < line.Count - 1 && d > lengths[k])
+                    k++;
+                var seg = line[k] - line[k - 1];
+                float t = Math.Clamp((d - lengths[k - 1]) / MathF.Max(lengths[k] - lengths[k - 1], 1e-4f), 0, 1);
+                return (Vector3.Lerp(line[k - 1], line[k], t), Vector3.Normalize(seg));
+            }
+
+            var turns = new Dictionary<int, Quaternion>();
+            foreach (var i in tail)
+            {
+                float u = along[i];
+                float fb = u * bins - 0.5f;
+                int b0 = Math.Clamp((int)MathF.Floor(fb), 0, bins - 1), b1 = Math.Min(bins - 1, b0 + 1);
+                var mid = Vector3.Lerp(middle[b0], middle[b1], Math.Clamp(fb - b0, 0, 1));
+                var offset = Positions[i] - mid;
+                offset -= modelDir * Vector3.Dot(offset, modelDir);
+                var (at, dir) = Along(u * length);
+                var axis = Vector3.Cross(modelDir, dir);
+                var turn = axis.LengthSquared() > 1e-8f
+                    ? Quaternion.CreateFromAxisAngle(Vector3.Normalize(axis), MathF.Acos(Math.Clamp(Vector3.Dot(modelDir, dir), -1, 1)))
+                    : Quaternion.Identity;
+                // the root stays on the body, bending over into the fighter's line
+                float k2 = SmoothStep(0, 0.2f, u);
+                Positions[i] = Vector3.Lerp(Positions[i], at + Vector3.Transform(offset, turn), k2);
+                turns[i] = Quaternion.Slerp(Quaternion.Identity, turn, k2);
+            }
+            // the normals turn with the tail
+            var normalTurn = new Dictionary<int, Quaternion>();
+            foreach (var t in Corners ?? new List<ObjModel.Triangle>())
+                foreach (var c in new[] { t.A, t.B, t.C })
+                    if (c.Normal >= 0 && turns.TryGetValue(c.Position, out var q))
+                        normalTurn[c.Normal] = q;
+            foreach (var (nrm, q) in normalTurn)
+                if (nrm < Normals.Length)
+                    Normals[nrm] = Vector3.Transform(Normals[nrm], q);
+            Report += $"tail: bent {angle * 180 / MathF.PI:F0} degrees to run along the fighter's tail bones\n";
         }
 
         private static float SmoothStep(float a, float b, float x)
@@ -1496,7 +1593,7 @@ namespace SkinTool
             // 2c. the model's tail follows the fighter's tail bones, root to tip
             Tail = new bool[n];
             if (opt.TailBones != null && opt.TailBones.Length > 0)
-                TailWeights(w, boneCount, opt.TailBones);
+                TailWeights(w, boneCount, opt.TailBones, opt.RotateX == 0 && opt.RotateZ == 0);
 
             // 3. small separate parts (claws, teeth, whiskers, eyes) move as one piece with the
             // body around them, so they stay attached to it
