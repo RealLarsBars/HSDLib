@@ -168,6 +168,9 @@ namespace SkinTool
 
         // those of them bent down to hang along a fighter whose arms hang (Ganondorf)
         private readonly HashSet<int> Hung = new();
+
+        // the model stands on four legs, its front legs held up as the fighter's arms (Spyro)
+        private bool FourLegs;
         private int[] FighterRegion;
         public int[] ModelRegion;
 
@@ -322,6 +325,11 @@ namespace SkinTool
                 // (Gusteau on Ganondorf); a hand brushing the floor in a crouch is the lesser evil
                 if (Hung.Contains(BoneRegion[bone]))
                     continue;
+                // so does an arm moved onto the fighter's arm, when the fighter's arms are short (Pikachu's) and
+                // the model's reach past them: let go to the hips, Remy's arms stayed out stiff in every move.
+                // A four-legged model's front legs do let go: as paws they swing down through the floor
+                if (Conformed.Contains(BoneRegion[bone]) && !FourLegs)
+                    continue;
                 var part = Enumerable.Range(0, n).Where(i => Weights[i].Any(e => e.Bone == bone)).ToList();
                 float before = part.Sum(i => Depth(i));
 
@@ -461,6 +469,19 @@ namespace SkinTool
 
             var target = new Vector3((fighter.Min.X + fighter.Max.X) / 2, fighter.Min.Y, zMid);
             var origin = new Vector3((min.X + max.X) / 2, min.Y, (min.Z + max.Z) / 2);
+            // a long tail laid out behind (Remy's, as long as he is tall) puts the middle of the box far behind
+            // the body, and the body lands in front of the fighter's bones: they swing it about from behind,
+            // and its arms, moved onto the fighter's, end up inside it. The body's middle is taken instead, the
+            // way the fighter's is, leaving out what sticks out behind or in front. Not for a model stood up from
+            // lying or on all fours (Spyro, turned 90 degrees): its long neck and tail aren't a body's front and back,
+            // and its placement is left to --move
+            var mzs = shape.Select(p => p.Z).OrderBy(z => z).ToArray();
+            float bodyMid = (mzs[mzs.Length / 10] + mzs[mzs.Length * 9 / 10]) / 2;
+            if (opt.RotateX == 0 && opt.RotateZ == 0 && MathF.Abs(origin.Z - bodyMid) > 0.15f * size.Z)
+            {
+                Report += $"depth: the body's middle is {MathF.Abs(origin.Z - bodyMid) / size.Z:P0} of the depth {(bodyMid > origin.Z ? "in front of" : "behind")} the middle of the whole model (a tail or snout sticking out); the body goes on the fighter's\n";
+                origin.Z = bodyMid;
+            }
 
             var grow = new Vector3(opt.Width, opt.Height, 1);
             Positions = pts.Select(p => (p - origin) * scale * grow + target).ToArray();
@@ -868,6 +889,7 @@ namespace SkinTool
                         }
                     }
                     LimbFollow[ArmLeft] = LimbFollow[ArmRight] = 1;
+                    FourLegs = true;
                     Report += $"four legs: the front legs ({legs.Count} points, up to {frontTop:P0} of the height) are held up as the fighter's arms\n";
                 }
             }
@@ -1133,8 +1155,11 @@ namespace SkinTool
                 return;
             float typical = filled[filled.Length / 2];
             float root = typical * 1.1f;
+            // a tail doesn't grow out of the head: big ears laid back (Remy's) reach out behind too, and on the
+            // tail bones they swing and stretch with every flick of the fighter's tail
+            float top = float.IsNaN(NeckY) ? float.MaxValue : NeckY - h * 0.04f;
             var tail = Enumerable.Range(0, n).Where(i => reach[Slice(Positions[i].Y)] > typical * 1.35f
-                && MathF.Abs(Positions[i].X - cx) < halfW * 0.5f && cz - Positions[i].Z > root).ToList();
+                && MathF.Abs(Positions[i].X - cx) < halfW * 0.5f && cz - Positions[i].Z > root && Positions[i].Y < top).ToList();
             if (tail.Count < n * 0.01f)
             {
                 Report += "tail: none found behind the model; it follows the body\n";

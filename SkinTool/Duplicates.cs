@@ -9,7 +9,7 @@ namespace SkinTool
     /// Finds parts that come twice: two versions of the same part on top of each other, like the gameplay
     /// and cutscene bodies and heads of Gusteau's Ratatouille rip. The game showed one at a time; drawn
     /// together they fight over which is in front and bend apart in moves, so only one is kept: the one not
-    /// named for cutscenes, or else the first.
+    /// named for cutscenes, or else the most detailed (remy_lod0 over remy_lod1), or else the first.
     /// </summary>
     public static class Duplicates
     {
@@ -70,7 +70,8 @@ namespace SkinTool
                     near = 0.05f * size;
                     if (Covered(parts[a].points, Grid(parts[b].points)) < 0.8f || Covered(parts[b].points, Grid(parts[a].points)) < 0.8f)
                         continue;
-                    int drop = Cutscene(parts[a].name) && !Cutscene(parts[b].name) ? a : b;
+                    int drop = Cutscene(parts[a].name) != Cutscene(parts[b].name) ? (Cutscene(parts[a].name) ? a : b)
+                        : Lod(parts[a].name) > Lod(parts[b].name) ? a : b;
                     gone.Add(drop);
                     removed.Add($"{parts[drop].name} (a second copy of {parts[drop == a ? b : a].name})");
                 }
@@ -82,6 +83,13 @@ namespace SkinTool
                 model.DropUnusedPositions();
             }
             return removed;
+        }
+
+        // the detail level in a name like remy_lod1 (0 is the most detailed), or -1
+        static int Lod(string name)
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(name, @"lod_?(\d+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            return m.Success ? int.Parse(m.Groups[1].Value) : -1;
         }
 
         static bool Cutscene(string name) =>
