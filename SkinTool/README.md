@@ -38,7 +38,14 @@ What `build` does, in the order the usual Blender + HSDRaw tutorial does it by h
    stretch of the height. They are arms from the top of the shoulder down, and their place along the arm
    is measured down their own slant, so a hand whose fingers curl back in still bends at the wrist. Their hands
    follow the fighter's finger joints half way past the wrist, so an open hand closes a little when the
-   fighter makes a fist instead of staying a stiff flat paddle (in full, a big open hand folded into a box). Weights are smoothed over the surface, cut to
+   fighter makes a fist instead of staying a stiff flat paddle (in full, a big open hand folded into a box). Arms that hang
+   well below the fighter's (Mr. Incredible's A-pose, 36 degrees down, on Falcon's T-pose) are turned up at the shoulder
+   to the fighter's angle first, easing in over the top of the arm so the shoulder bends rather than tears, and then go
+   onto the fighter's arms like arms held out: before, they sat so far below Falcon's arms that they only half followed
+   them, and stayed down when he punched. Only a pair hanging alike on both sides, running across the front, is turned
+   (Rex's tail, sticking out sideways behind him, isn't). `--arm-angle 20` turns them to that many degrees below level by
+   hand (negative: above), on any fighter; the report says the angle found (`arms: the model's point 36 degrees down, the
+   fighter's 1; turned to 1 at the shoulder`). Weights are smoothed over the surface, cut to
    3 per vertex and normalized. Small separate pieces (claws, teeth, whiskers) move as one piece with
    the body around them. Above the neck everything follows the head alone (see Head below).
 3. **Import**: one mesh per texture, CMP textures (RGB5A3 when they have transparency), triangle strips.
@@ -131,6 +138,7 @@ legs = body       # auto | separate | body | cut | dress (cut: two legs down the
                   #   dress: the legs run up to the hips under a long coat or dress)
 clothes = outside # outside | legs (clothes found over the legs: one sheet over them, or split to follow each leg)
 arms = auto       # auto | fighter (always onto the fighter's arms) | body
+arm-angle = auto  # auto | 20 (turn the arms at the shoulder to point that many degrees below level; negative: above)
 neck = auto       # auto | none | 0.6 (where the head starts, as a share of the height)
 neck-tilt = 0     # with neck set by hand: its lean in degrees, positive lower at the front
 scale = 1.1

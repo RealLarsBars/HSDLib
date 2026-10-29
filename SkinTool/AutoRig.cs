@@ -85,6 +85,10 @@ namespace SkinTool
             // (mostly stay with the body)
             public string Arms = "auto";
 
+            // the angle the model's arms are turned to at the shoulder, before weighting, in degrees below
+            // level (negative: above). NaN works it out: arms hanging well below the fighter's are lifted to its angle
+            public float ArmAngle = float.NaN;
+
             // parts with fewer vertices than this share of the model move as one piece with the body around them
             public float RigidPartShare = 0.15f;
 
@@ -838,6 +842,8 @@ namespace SkinTool
                     if (!inShape[i])
                         ModelRegion[i] = ModelRegion[shapeIdx.MinBy(j => Vector3.DistanceSquared(pts[i], pts[j]))];
 
+            TurnArms(pts, skeleton, opt, scale * grow);
+
             // A fighter whose legs part well below its hip joints (Ganondorf, under his tabard) swings its thighs
             // from up there. A model whose legs show only below a skirt or kilt (Kronk's) has its leg tops lined
             // up with where the fighter's legs part, but the skirt above them went with the hips alone: in a kick
@@ -1071,6 +1077,109 @@ namespace SkinTool
             Report += $"legs: the model's split at {modelCrotch:P0} of its height lines up with the top of the fighter's legs at {fighterCrotch:P0}\n";
 
             Report += $"fitted size x{scale:F2}: {size.Y * scale * opt.Height:F1} tall next to the fighter's {fighterSize.Y:F1}, {size.X * scale * opt.Width:F1} wide next to its {fighterSize.X:F1}\n";
+        }
+
+        /// <summary>
+        /// Turns the model's arms at the shoulder, before they're weighted. Arms modelled hanging down (Mr.
+        /// Incredible's A-pose) on a fighter whose arms are held out (Falcon's T-pose) sat far below the fighter's
+        /// arms, so they only half followed them and stretched whenever the fighter lifted its arms. They're lifted
+        /// to the fighter's angle instead, and then moved onto its arms like any arm held out. <see cref="Options.ArmAngle"/>
+        /// sets the angle by hand. Each arm turns about the top of the arm, where it leaves the shoulder, easing in
+        /// over its first stretch so the shoulder bends rather than tears; its hand turns with it. <paramref name="k"/>
+        /// takes the model's units to the fitted ones (sizes and stretches), so the angles are the fitted model's.
+        /// </summary>
+        private void TurnArms(Vector3[] pts, Skeleton skeleton, Options opt, Vector3 k)
+        {
+            var grow = k / k.X;
+            var arms = new List<(int region, List<int> members, Vector3 pivot, float angle, float tmin, float tmax, Vector3 dir)>();
+            foreach (int region in new[] { ArmLeft, ArmRight })
+            {
+                var members = Enumerable.Range(0, pts.Length).Where(i => ModelRegion[i] == region).ToList();
+                if (members.Count < 8)
+                    continue;
+                float sign = region == ArmLeft ? 1 : -1;
+                var g = members.Select(i => pts[i] * grow).ToList();
+                var mean = g.Aggregate(Vector3.Zero, (a, q) => a + q) / g.Count;
+                // the arm's main line, the way its points spread the most (power iteration on their spread)
+                float xx = 0, xy = 0, xz = 0, yy = 0, yz = 0, zz = 0;
+                foreach (var q in g)
+                {
+                    var d = q - mean;
+                    xx += d.X * d.X; xy += d.X * d.Y; xz += d.X * d.Z; yy += d.Y * d.Y; yz += d.Y * d.Z; zz += d.Z * d.Z;
+                }
+                var dir = new Vector3(sign, -1, 0);
+                for (int it = 0; it < 32; it++)
+                {
+                    var n = new Vector3(xx * dir.X + xy * dir.Y + xz * dir.Z, xy * dir.X + yy * dir.Y + yz * dir.Z, xz * dir.X + yz * dir.Y + zz * dir.Z);
+                    if (n.LengthSquared() < 1e-12f)
+                        break;
+                    dir = Vector3.Normalize(n);
+                }
+                if (dir.X * sign < 0)
+                    dir = -dir;
+                var t = g.Select(q => Vector3.Dot(q - mean, dir)).ToList();
+                float tmin = t.Min(), tmax = t.Max();
+                if (tmax - tmin < 1e-5f)
+                    continue;
+                // where the arm leaves the shoulder: the middle of its innermost stretch
+                var inner = Enumerable.Range(0, g.Count).Where(j => t[j] < tmin + 0.15f * (tmax - tmin)).ToList();
+                var pivot = inner.Aggregate(Vector3.Zero, (a, j) => a + g[j]) / inner.Count;
+                float angle = MathF.Atan2(-dir.Y, MathF.Abs(dir.X)) * 180 / MathF.PI;
+                arms.Add((region, members, pivot, angle, tmin - Vector3.Dot(pivot - mean, dir), tmax - Vector3.Dot(pivot - mean, dir), dir));
+            }
+            if (arms.Count == 0)
+                return;
+
+            // the fighter's arms, shoulder to hand, in its bind pose
+            var theirs = new List<float>();
+            foreach (var side in new[] { "l", "r" })
+                if (opt.Roles != null && opt.Roles.TryGetValue(side + "sh", out int sh) && opt.Roles.TryGetValue(side + "ha", out int ha))
+                {
+                    var d = skeleton.Position(ha) - skeleton.Position(sh);
+                    if (MathF.Abs(d.X) + MathF.Abs(d.Y) > 1e-4f)
+                        theirs.Add(MathF.Atan2(-d.Y, MathF.Abs(d.X)) * 180 / MathF.PI);
+                }
+            float mine = arms.Average(a => a.angle);
+            float fighterAngle = theirs.Count > 0 ? theirs.Average() : float.NaN;
+            static int Deg(float a) => (int)MathF.Round(a) + 0;
+            string found = $"arms: the model's point {Deg(mine)} degrees down" + (theirs.Count > 0 ? $", the fighter's {Deg(fighterAngle)}" : "");
+            // only arms clearly hanging below the fighter's are lifted: a T-pose a little off stays as it is, and
+            // a fighter whose own arms hang (Ganondorf) has them bent down along its arms later (ConformArm).
+            // And only a pair that looks like arms: one each side, hanging alike, running across the front rather
+            // than back (Rex's big tail, sticking out sideways behind him, was taken for arms and swung up)
+            bool pair = arms.Count == 2 && MathF.Abs(arms[0].angle - arms[1].angle) < 15 && arms.All(a => MathF.Abs(a.dir.Z) < 0.5f);
+            float want = !float.IsNaN(opt.ArmAngle) ? opt.ArmAngle
+                : pair && opt.Arms != "body" && opt.Conform && !float.IsNaN(fighterAngle) && mine >= 25 && mine <= 75 && mine - fighterAngle >= 20 ? fighterAngle : float.NaN;
+            if (float.IsNaN(want) || MathF.Abs(want - mine) < 1)
+            {
+                Report += found + "\n";
+                return;
+            }
+            Report += found + $"; turned to {Deg(want)} at the shoulder ({(float.IsNaN(opt.ArmAngle) ? "lifted to the fighter's" : "set by hand")})\n";
+
+            // normals are kept per corner: each turns with its point
+            var turns = new Dictionary<int, Matrix4x4>();
+            foreach (var a in arms)
+            {
+                float sign = a.region == ArmLeft ? 1 : -1;
+                // lifting a +x arm turns it about +z, a -x arm the other way
+                float turn = (a.angle - want) * MathF.PI / 180 * sign;
+                foreach (int i in a.members)
+                {
+                    var q = pts[i] * grow;
+                    float u = Math.Clamp(Vector3.Dot(q - a.pivot, a.dir) / MathF.Max(a.tmax, 1e-5f), 0, 1);
+                    var r = Matrix4x4.CreateRotationZ(turn * SmoothStep(0, 0.3f, u));
+                    var moved = (a.pivot + Vector3.Transform(q - a.pivot, r)) / grow;
+                    Positions[i] += (moved - pts[i]) * k;
+                    pts[i] = moved;
+                    turns[i] = r;
+                }
+            }
+            var done = new HashSet<int>();
+            foreach (var t in Corners)
+                foreach (var c in new[] { t.A, t.B, t.C })
+                    if (c.Normal >= 0 && turns.TryGetValue(c.Position, out var r) && done.Add(c.Normal))
+                        Normals[c.Normal] = Vector3.TransformNormal(Normals[c.Normal], r);
         }
 
         /// <summary>
