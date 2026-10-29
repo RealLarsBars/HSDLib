@@ -2372,8 +2372,6 @@ namespace SkinTool
                 if (count == 1)
                     open[e.Item1] = open[e.Item2] = true;
             var ends = Enumerable.Range(0, n).Where(i => open[i] && Joinable(i)).ToList();
-            if (ends.Count == 0)
-                return;
             float tall = Positions.Max(q => q.Y) - Positions.Min(q => q.Y);
             float reach = 0.06f * tall;
             // the other pieces' points in a grid as wide as the reach
@@ -2410,6 +2408,38 @@ namespace SkinTool
             // a piece's end counts as tucked when most of its open edge is (a whole leg top, not one point of a hem
             // that happens to pass near the body)
             var byPart = into.Keys.GroupBy(i => Part[i]).Where(g => g.Count() >= 0.5f * ends.Count(e => Part[e] == g.Key) && g.Count() >= 3).SelectMany(g => g).ToList();
+            // a closed piece pushed down into another (Rex's head and neck, stuck into the top of his body) has no
+            // open end, but the points of it inside the other piece are tucked all the same: when the two follow
+            // different bones, the neck slid up out of the body and the head came away from it
+            foreach (var (i, other) in Inside(triangles, Joinable))
+            {
+                if (!into.ContainsKey(i) && Differ(w[i], w[other]) > 0.25f)
+                {
+                    into[i] = other;
+                    byPart.Add(i);
+                }
+            }
+            // a piece of the head reaching down below the head line onto the body (Rex's head and neck, one piece
+            // sitting on his chest): there it's the body's, as a head that isn't a piece of its own is below the line
+            if (!float.IsNaN(NeckY) && HeadBone >= 0)
+            {
+                var below = Enumerable.Range(0, n).Where(i => Positions[i].Y < NeckYAt(Positions[i])).ToHashSet();
+                var headParts = Enumerable.Range(0, n).GroupBy(i => Part[i]).Where(g => g.Count(below.Contains) * 4 < g.Count()).Select(g => g.Key).ToHashSet();
+                var body = Enumerable.Range(0, n).Where(i => Joinable(i) && below.Contains(i) && !headParts.Contains(Part[i])).ToArray();
+                float touch = 0.03f * tall;
+                foreach (int i in below)
+                {
+                    if (!headParts.Contains(Part[i]) || !Joinable(i) || into.ContainsKey(i) || body.Length == 0)
+                        continue;
+                    int other = body.MinBy(j => Vector3.DistanceSquared(Positions[i], Positions[j]));
+                    if (Vector3.Distance(Positions[i], Positions[other]) < touch && Differ(w[i], w[other]) > 0.25f)
+                    {
+                        into[i] = other;
+                        byPart.Add(i);
+                    }
+                }
+            }
+            byPart = byPart.GroupBy(i => Part[i]).Where(g => g.Count() >= 3).SelectMany(g => g).ToList();
             if (byPart.Count == 0)
                 return;
             var target = byPart.ToDictionary(i => i, i => (float[])w[into[i]].Clone());
@@ -2437,6 +2467,98 @@ namespace SkinTool
                 eased++;
             }
             Report += $"tucked: {byPart.Count} points of {parts.Count} pieces end inside another piece; {eased} points ease into its weights, so they can't come out of it\n";
+        }
+
+        /// <summary>
+        /// The points of each piece that lie inside another, closed piece (one with no open edge), with the
+        /// nearest point of that piece. A point is inside when a ray from it crosses the other piece's surface
+        /// an odd number of times.
+        /// </summary>
+        private List<(int Point, int Other)> Inside(List<ObjModel.Triangle> triangles, Func<int, bool> joinable)
+        {
+            int n = Positions.Length;
+            var found = new List<(int, int)>();
+            // open edges with points split by UV seams counted as one, or every textured piece looks open
+            var same = new int[n];
+            var byPos = new Dictionary<(int, int, int), int>();
+            for (int i = 0; i < n; i++)
+            {
+                var q = Positions[i] * 1000;
+                var key = ((int)MathF.Round(q.X), (int)MathF.Round(q.Y), (int)MathF.Round(q.Z));
+                same[i] = byPos.TryAdd(key, i) ? i : byPos[key];
+            }
+            var edges = new Dictionary<(int, int), int>();
+            foreach (var t in triangles.Where(t => !t.Outline))
+            {
+                var c = new[] { same[t.A.Position], same[t.B.Position], same[t.C.Position] };
+                for (int k = 0; k < 3; k++)
+                {
+                    var e = (Math.Min(c[k], c[(k + 1) % 3]), Math.Max(c[k], c[(k + 1) % 3]));
+                    edges[e] = edges.GetValueOrDefault(e) + 1;
+                }
+            }
+            var open = new bool[n];
+            foreach (var (e, count) in edges)
+                if (count == 1)
+                    open[e.Item1] = open[e.Item2] = true;
+            for (int i = 0; i < n; i++)
+                open[i] = open[same[i]];
+            var byPart = triangles.Where(t => !t.Outline).GroupBy(t => Part[t.A.Position]).ToDictionary(g => g.Key, g => g.ToList());
+            var closed = byPart.Where(kv => kv.Value.All(t => !open[t.A.Position] && !open[t.B.Position] && !open[t.C.Position]))
+                .Select(kv => kv.Key).ToList();
+            if (closed.Count == 0)
+                return found;
+            // an odd direction, so the ray doesn't run along an edge of a model built square to the axes
+            var dir = Vector3.Normalize(new Vector3(0.31f, 0.83f, 0.47f));
+            var boxes = closed.ToDictionary(c => c, c =>
+            {
+                var pts = byPart[c].SelectMany(t => new[] { t.A.Position, t.B.Position, t.C.Position }).Select(k => Positions[k]).ToList();
+                return (Min: pts.Aggregate(Vector3.Min), Max: pts.Aggregate(Vector3.Max));
+            });
+            var members = closed.ToDictionary(c => c, c => Enumerable.Range(0, n).Where(i => Part[i] == c && joinable(i)).ToArray());
+            for (int i = 0; i < n; i++)
+            {
+                if (!joinable(i))
+                    continue;
+                var p = Positions[i];
+                foreach (int c in closed)
+                {
+                    var (lo, hi) = boxes[c];
+                    if (c == Part[i] || members[c].Length == 0 || Vector3.Clamp(p, lo, hi) != p)
+                        continue;
+                    int hits = 0;
+                    foreach (var t in byPart[c])
+                        if (RayHits(p, dir, Positions[t.A.Position], Positions[t.B.Position], Positions[t.C.Position]))
+                            hits++;
+                    if (hits % 2 == 1)
+                    {
+                        found.Add((i, members[c].MinBy(j => Vector3.DistanceSquared(p, Positions[j]))));
+                        break;
+                    }
+                }
+            }
+            return found;
+        }
+
+        // Moller-Trumbore, forward along the ray only
+        private static bool RayHits(Vector3 o, Vector3 d, Vector3 a, Vector3 b, Vector3 c)
+        {
+            var e1 = b - a;
+            var e2 = c - a;
+            var h = Vector3.Cross(d, e2);
+            float det = Vector3.Dot(e1, h);
+            if (MathF.Abs(det) < 1e-12f)
+                return false;
+            float f = 1 / det;
+            var s = o - a;
+            float u = f * Vector3.Dot(s, h);
+            if (u < 0 || u > 1)
+                return false;
+            var q = Vector3.Cross(s, e1);
+            float v = f * Vector3.Dot(d, q);
+            if (v < 0 || u + v > 1)
+                return false;
+            return f * Vector3.Dot(e2, q) > 1e-6f;
         }
 
         private void Smooth(float[][] w, HashSet<int>[] adj, int boneCount, int passes, Func<int, bool> include)
