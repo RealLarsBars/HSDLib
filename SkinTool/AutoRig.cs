@@ -126,6 +126,9 @@ namespace SkinTool
 
         // detail bone -> the bone that takes its weight
         private int[] Remap;
+        // the remap that sorts the fighter's own points into regions: shoulder helpers stay with the body
+        // there, so the fitting (where the fighter's arms start) isn't moved by where their weights go
+        private int[] RegionRemap;
 
         // Body regions. Weights are only copied between matching regions, so a wide body never picks up
         // the fighter's arms and a round belly never picks up its thighs.
@@ -175,6 +178,7 @@ namespace SkinTool
             {
                 var shoulders = opt.Roles == null ? new int[0] : new[] { "lsh", "rsh" }.Where(opt.Roles.ContainsKey).Select(r => opt.Roles[r]).ToArray();
                 rig.Remap = ChosenBoneRemap(fighter, skeleton, opt.Bones, head, shoulders);
+                rig.RegionRemap = ChosenBoneRemap(fighter, skeleton, opt.Bones, head);
                 rig.Report += $"bones from the fighter's bone map: {string.Join(",", opt.Bones)}\n";
                 var helpers = Enumerable.Range(0, rig.Remap.Length).Where(b => shoulders.Contains(rig.Remap[b]) && !opt.Bones.Contains(b) && fighter.BoneExtent.ContainsKey(b)).ToList();
                 if (helpers.Count > 0)
@@ -182,6 +186,7 @@ namespace SkinTool
             }
             else
                 rig.Report += $"detail bones folded into their parents: {string.Join(",", merged)}\n";
+            rig.RegionRemap ??= rig.Remap;
             rig.HeadBone = head;
             rig.Skel = skeleton;
             rig.FighterRegions(fighter, skeleton, head, opt.Roles);
@@ -316,11 +321,6 @@ namespace SkinTool
                     continue;
                 var part = Enumerable.Range(0, n).Where(i => Weights[i].Any(e => e.Bone == bone)).ToList();
                 float before = part.Sum(i => Depth(i));
-
-                // arms are left alone: a hand brushing the floor is fine, a forearm locked to the shoulder
-                // in every move isn't (Linguini's arms stuck out stiff)
-                if (BoneRegion[bone] is ArmLeft or ArmRight)
-                    continue;
 
                 // a leg or tail that reaches out past the fighter's own (a four-legged model's front legs,
                 // a long tail) swings much further than the fighter's does, down through the floor in a
@@ -664,6 +664,14 @@ namespace SkinTool
             for (int i = 0; i < pts.Length; i++)
                 if (!FighterRegion.Contains(ModelRegion[i]))
                     ModelRegion[i] = Body;
+
+            // an outline shell sits a little outside the shape it was measured without: each of its points
+            // goes with the nearest point of the shape (or the body's sides come out as arms)
+            var shapeIdx = Enumerable.Range(0, pts.Length).Where(i => inShape[i]).ToArray();
+            if (shapeIdx.Length < pts.Length)
+                for (int i = 0; i < pts.Length; i++)
+                    if (!inShape[i])
+                        ModelRegion[i] = ModelRegion[shapeIdx.MinBy(j => Vector3.DistanceSquared(pts[i], pts[j]))];
 
             // the fighter's body outline at each height, to line the two bodies' sides up
             float fcx = (fighter.Min.X + fighter.Max.X) / 2;
@@ -2140,7 +2148,7 @@ namespace SkinTool
 
             float height = fighter.Max.Y - fighter.Min.Y, width = fighter.Max.X - fighter.Min.X;
             float cx = (fighter.Min.X + fighter.Max.X) / 2;
-            var byBranch = fighter.Vertices.Where(v => branch[Remap[Dominant(v)]] >= 0).GroupBy(v => branch[Remap[Dominant(v)]]);
+            var byBranch = fighter.Vertices.Where(v => branch[RegionRemap[Dominant(v)]] >= 0).GroupBy(v => branch[RegionRemap[Dominant(v)]]);
             var branchRegion = new Dictionary<int, int>();
             foreach (var g in byBranch)
             {
@@ -2156,7 +2164,7 @@ namespace SkinTool
             BoneRegion = new int[n];
             for (int b = 0; b < n; b++)
                 BoneRegion[b] = branch[b] < 0 ? Body : branchRegion.GetValueOrDefault(branch[b], Other);
-            FighterRegion = fighter.Vertices.Select(v => BoneRegion[Remap[Dominant(v)]]).ToArray();
+            FighterRegion = fighter.Vertices.Select(v => BoneRegion[RegionRemap[Dominant(v)]]).ToArray();
 
             Report += "fighter regions: " + string.Join(", ", Enumerable.Range(0, RegionNames.Length)
                 .Select(r => (r, bones: Enumerable.Range(0, n).Where(b => BoneRegion[b] == r && fighter.BoneExtent.ContainsKey(b)).ToList()))
@@ -2182,8 +2190,8 @@ namespace SkinTool
             int n = sk.Joints.Count;
             BoneRegion = new int[n];
             for (int b = 0; b < n; b++)
-                BoneRegion[b] = byBone.GetValueOrDefault(Remap[b], Other);
-            FighterRegion = fighter.Vertices.Select(v => BoneRegion[Remap[Dominant(v)]]).ToArray();
+                BoneRegion[b] = byBone.GetValueOrDefault(RegionRemap[b], Other);
+            FighterRegion = fighter.Vertices.Select(v => BoneRegion[RegionRemap[Dominant(v)]]).ToArray();
 
             Report += "fighter regions from the bone map: " + string.Join(", ", Enumerable.Range(0, RegionNames.Length)
                 .Select(r => (r, bones: roles.Values.Distinct().Where(b => byBone[b] == r).OrderBy(b => b).ToList()))
