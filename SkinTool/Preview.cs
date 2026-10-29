@@ -992,6 +992,84 @@ namespace SkinTool
             return img;
         }
 
+        // the part map's colours, by AutoRig.PartKind: body, head, arm, leg, tail, clothes
+        static readonly Vector3[] PartColours =
+        {
+            new(0.62f, 0.64f, 0.68f), new(0.98f, 0.78f, 0.25f), new(0.35f, 0.75f, 0.35f),
+            new(0.3f, 0.6f, 0.95f), new(0.72f, 0.4f, 0.85f), new(0.95f, 0.55f, 0.35f),
+        };
+
+        /// <summary>
+        /// The part map: the fitted model front and side, each point coloured by the part the rig put it in, over the
+        /// fighter in grey, framed like the size check (so a spot clicked on either picture is the same spot).
+        /// </summary>
+        public static void PartMap(string costume, HSDRaw.Melee.Pl.SBM_FighterData fighter, ObjModel model, Vector3[] positions, AutoRig.PartKind[] labels, string output)
+        {
+            const int cell = 320;
+            var sk = new Skeleton((HSD_JOBJ)new HSDRawFile(costume).Roots[0].Data);
+            var hidden = fighter != null ? Slots.HiddenByDefault(fighter) : new HashSet<int>();
+            var original = Decode(sk).Where(t => !hidden.Contains(t.Slot)).ToList();
+            // each colour is a one-pixel texture, so the renderer's shading still shows the shape
+            var swatches = PartColours.Select(c => new Tex { W = 1, H = 1, Bgra = new[] { (byte)(c.Z * 255), (byte)(c.Y * 255), (byte)(c.X * 255), (byte)255 } }).ToArray();
+            var tris = new List<Tri>();
+            foreach (var t in model.Triangles.Where(t => !t.Outline))
+            {
+                Vert V(ObjModel.Corner c) => new Vert { Pos = positions[c.Position], Bones = new[] { 0 }, Weights = new[] { 1f } };
+                // a triangle takes the part most of its corners are in
+                var ks = new[] { labels[t.A.Position], labels[t.B.Position], labels[t.C.Position] };
+                var k = ks.GroupBy(x => x).OrderByDescending(g => g.Count()).ThenBy(g => g.Key).First().Key;
+                tris.Add(new Tri { A = V(t.A), B = V(t.B), C = V(t.C), Tex = swatches[(int)k], TwoSided = true });
+            }
+            var bind = new Pose { Name = "bind" };
+            var sheet = new Bitmap(cell * 2, cell);
+            var drawn = new Bitmap[4];
+            Parallel.For(0, 4, k => drawn[k] = k % 2 == 0 ? Render(sk, original, bind, k / 2 * 90f, cell) : Render(sk, tris, bind, k / 2 * 90f, cell, clear: true));
+            for (int v = 0; v < 2; v++)
+            {
+                var img = drawn[v * 2];
+                // the fighter faded to grey behind the model
+                for (int i = 0; i < img.Rgba.Length; i += 4)
+                {
+                    byte g = (byte)((img.Rgba[i] + img.Rgba[i + 1] + img.Rgba[i + 2]) / 3 * 0.45f + 40 * 0.55f);
+                    img.Rgba[i] = img.Rgba[i + 1] = img.Rgba[i + 2] = g;
+                }
+                img.Blend(drawn[v * 2 + 1], 1f);
+                sheet.Draw(img, v * cell, 0);
+            }
+            sheet.SavePng(output);
+            Console.WriteLine($"wrote {output}");
+        }
+
+        /// <summary>
+        /// The model point under a spot on the size check or the part map (front: x under 320, side: the right
+        /// half, or given by <paramref name="view"/>), the nearest one facing the camera; -1 when nothing is near.
+        /// </summary>
+        public static int PointAt(string costume, Vector3[] positions, string view, float x, float y)
+        {
+            const int cell = 320;
+            var sk = new Skeleton((HSD_JOBJ)new HSDRawFile(costume).Roots[0].Data);
+            int hip = Math.Min(4, sk.Joints.Count - 1);
+            var hips = sk.Position(hip);
+            float yaw = view == "side" ? 90f : 0f;
+            if (view == "side" && x >= cell)
+                x -= cell;
+            var m = Matrix4x4.CreateTranslation(-hips.X, -hips.Y + 8.3f, -hips.Z) * Matrix4x4.CreateRotationY(yaw * MathF.PI / 180);
+            int best = -1;
+            float bestZ = float.MinValue;
+            for (float radius = 3; best < 0 && radius <= 12; radius *= 2)
+                for (int i = 0; i < positions.Length; i++)
+                {
+                    var q = Vector3.Transform(positions[i], m);
+                    float sx = cell / 2f + q.X * cell / 26f, sy = cell * 0.92f - q.Y * cell / 26f;
+                    if ((sx - x) * (sx - x) + (sy - y) * (sy - y) <= radius * radius && q.Z > bestZ)
+                    {
+                        bestZ = q.Z;
+                        best = i;
+                    }
+                }
+            return best;
+        }
+
         static float Edge(Vector2 a, Vector2 b, Vector2 p) => (b.X - a.X) * (p.Y - a.Y) - (b.Y - a.Y) * (p.X - a.X);
 
         static Vector3 Sample(Tex t, Vector2 uv)

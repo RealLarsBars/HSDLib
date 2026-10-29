@@ -41,7 +41,10 @@ namespace SkinTool
             // a tail doesn't grow out of the head: big ears laid back (Remy's) reach out behind too, and on the
             // tail bones they swing and stretch with every flick of the fighter's tail
             var tail = Enumerable.Range(0, n).Where(i => reach[Slice(Positions[i].Y)] > typical * 1.35f
-                && MathF.Abs(Positions[i].X - cx) < halfW * 0.5f && cz - Positions[i].Z > root && Positions[i].Y < NeckYAt(Positions[i]) - h * 0.04f).ToList();
+                && MathF.Abs(Positions[i].X - cx) < halfW * 0.5f && cz - Positions[i].Z > root && BelowNeck(i, 0.04f, h)).ToList();
+            // points put in the tail by hand go on it, and points put anywhere else come off it
+            if (Fixed != null)
+                tail = tail.Where(i => Fixed[i] == null).Concat(Enumerable.Range(0, n).Where(i => Fixed[i] == PartKind.Tail)).ToList();
             if (tail.Count < n * 0.01f)
             {
                 Report += "tail: none found behind the model; it follows the body\n";

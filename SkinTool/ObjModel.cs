@@ -56,14 +56,17 @@ namespace SkinTool
         public static ObjModel LoadRaw(string path) =>
             path.EndsWith(".obj", StringComparison.OrdinalIgnoreCase) ? LoadObj(path) : ModelImport.Load(path);
 
-        /// <summary>A copy whose parts and materials can change without changing this one.</summary>
-        public ObjModel Copy()
+        /// <summary>
+        /// A copy whose parts and materials can change without changing this one; <paramref name="deep"/> copies
+        /// the triangles too, for a fit that moves their corners (cut legs) to leave this one as it was.
+        /// </summary>
+        public ObjModel Copy(bool deep = false)
         {
             var copy = new ObjModel { Directory = Directory, Textures = new Dictionary<string, string>(Textures) };
             copy.Positions.AddRange(Positions);
             copy.UVs.AddRange(UVs);
             copy.Normals.AddRange(Normals);
-            copy.Triangles.AddRange(Triangles);
+            copy.Triangles.AddRange(deep ? Triangles.Select(t => new Triangle { A = t.A, B = t.B, C = t.C, Material = t.Material, Object = t.Object, Outline = t.Outline }) : Triangles);
             copy.Notes.AddRange(Notes);
             return copy;
         }

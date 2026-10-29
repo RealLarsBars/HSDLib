@@ -16,7 +16,7 @@ namespace SkinTool
                [--fighter <Pl**.dat>] [--bones 41,22,...] [--scale 1.0] [--width 1.0] [--height 1.0] [--rotate 0 | x,y,z] [--move forward[,up]] [--textures <costume.dat>=<folder> ...]
                [--legs auto|separate|body|cut|dress] [--clothes outside|legs] [--arms auto|fighter|body] [--arm-angle auto|40] [--neck auto|none|0.6 [--neck-tilt 0]] [--tail yes|no] [--attach yes|no] [--style normal|animelee] [--eyes <key>] [--leg-band 0.3] [--keep-shape]
                [--pick <model in the zip or folder>] [--weapon <name>=<model|zip> [--weapon-pick <name>=<model>] [--weapon-flip <name>] ...]
-               [--preview <out.png> [--anims <Pl**AJ.dat>]] [--overlay <out.png> [--fit-only]] [--portraits <folder>]
+               [--preview <out.png> [--anims <Pl**AJ.dat>]] [--overlay <out.png> [--fit-only]] [--parts <out.png>] [--part <point|front:x,y>=<part>[@reach] ...] [--portraits <folder>]
 skintool models <zip|folder> --out <folder>
 skintool weapons <costume.dat>
 skintool stretch <costume.dat> <Pl**.dat> <Pl**AJ.dat>
@@ -65,6 +65,12 @@ build    Swaps the model into every costume given, keeping each costume's skelet
          The same rules can come with the model in a skin.txt next to the OBJ (""legs = body"").
          --overlay draws the fitted model over the first costume, to check its size; with --fit-only
          that's all it does (no costumes are written, --out isn't needed).
+         --parts draws the part map: the fitted model coloured by the part each point went in (head, body,
+         arms, legs, tail, clothes), framed like --overlay.
+         --part puts a spot of the model in a part by hand, over what was found: a point (as a part fix
+         line printed it) or a spot on the overlay or part map (front:x,y, x past 320 is the side view), then
+         = body, head, arm, leg or tail, and @reach how far around it along the surface (a share of the
+         height, 0.25 by default; only over points found in the same part as the spot).
          --pick chooses the model when a zip or folder holds more than one.
          --weapon swaps one of the fighter's weapons (pan, sword, hammer; see weapons) for another model,
          fitted over the original; --weapon-flip turns it end for end. Weapons not given keep the costume's own.
@@ -448,7 +454,7 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
 
         static int Build(string[] args)
         {
-            string model = null, outDir = null, fighterDat = null, previewPng = null, animDat = null, pick = null, overlayPng = null, portraitDir = null;
+            string model = null, outDir = null, fighterDat = null, previewPng = null, animDat = null, pick = null, overlayPng = null, portraitDir = null, partsPng = null;
             bool fitOnly = false;
             var weaponFiles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var weaponPicks = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -490,6 +496,8 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
                     case "--pick": pick = Next(); break;
                     case "--overlay": overlayPng = Next(); break;
                     case "--fit-only": fitOnly = true; break;
+                    case "--parts": partsPng = Next(); break;
+                    case "--part": (opt.PartFixes ??= new()).Add(AutoRig.PartFix.Parse(Next())); break;
                     case "--portraits": portraitDir = Next(); break;
                     case "--weapon":
                         var w = Next().Split('=', 2);
@@ -550,7 +558,7 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
                 }
 
                 ReadRules(model, opt, args.Where(a => a.StartsWith("--")).ToHashSet());
-                BuildCostumes(model, dats, outDir, fighterDat, textureFolders, opt, uploads, overlayPng, fitOnly, animDat);
+                BuildCostumes(model, dats, outDir, fighterDat, textureFolders, opt, uploads, overlayPng, fitOnly, animDat, partsPng);
 
                 // the preview, the stretch check and the portraits only read the costumes, so they're drawn
                 // side by side; what they say prints in the same order as before
@@ -717,7 +725,7 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
             return 0;
         }
 
-        static void BuildCostumes(string model, List<string> dats, string outDir, string fighterDat, Dictionary<string, string> textureFolders, AutoRig.Options opt, Dictionary<string, Weapons.Upload> uploads, string overlayPng = null, bool fitOnly = false, string animDat = null)
+        static void BuildCostumes(string model, List<string> dats, string outDir, string fighterDat, Dictionary<string, string> textureFolders, AutoRig.Options opt, Dictionary<string, Weapons.Upload> uploads, string overlayPng = null, bool fitOnly = false, string animDat = null, string partsPng = null)
         {
             if (!fitOnly)
                 Directory.CreateDirectory(outDir);
@@ -755,6 +763,9 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
             opt.Dress = opt.OwnDress || opt.Legs == "dress";
             if (opt.Legs == "dress")
                 opt.Legs = "separate";
+            // a part put in the tail by hand needs the tail bones
+            if (opt.PartFixes != null && opt.PartFixes.Any(f => f.Kind == AutoRig.PartKind.Tail))
+                opt.HasTail = true;
             if (opt.HasTail)
             {
                 var weighted = BoneMaps.Weighted(firstRoot);
@@ -767,6 +778,22 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
                     if (opt.Bones != null)
                         opt.Bones = opt.Bones.Concat(tail).Distinct().ToArray();
                 }
+            }
+            // spots clicked on the part map are found on the model as fitted without them, then fitted again
+            // with them; the report gives the point each one was, so the panel can keep it as a point
+            var spots = opt.PartFixes?.Where(f => f.Point < 0).ToList() ?? new();
+            if (spots.Count > 0)
+            {
+                var without = opt.Copy();
+                without.PartFixes = opt.PartFixes.Except(spots).ToList();
+                var unfixed = AutoRig.Run(obj.Copy(deep: true), fighter, skeleton, without);
+                foreach (var fix in spots)
+                {
+                    string spot = fix.ToString();
+                    fix.Point = Preview.PointAt(dats[0], unfixed.Positions, fix.View == "side" || fix.X >= 320 ? "side" : "front", fix.X, fix.Y);
+                    Console.WriteLine(fix.Point >= 0 ? $"part fix: {spot} is point {fix.Point}" : $"part fix: {spot} isn't on the model; left out");
+                }
+                opt.PartFixes.RemoveAll(f => f.Point < 0);
             }
             var rig = AutoRig.Run(obj, fighter, skeleton, opt);
             // the fighter's moves, to keep the skin out of the floor in its low ones. Only the weights
@@ -782,6 +809,8 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
             Console.Write(rig.Report);
             if (overlayPng != null)
                 Preview.Overlay(dats[0], fighterData, obj, rig.Positions, overlayPng, float.IsNaN(rig.NeckY) ? null : rig.NeckYAt, rig.NeckSlope != 0 ? rig.NeckZ : null);
+            if (partsPng != null)
+                Preview.PartMap(dats[0], fighterData, obj, rig.Positions, rig.Labels(), partsPng);
             if (fitOnly)
                 return;
 

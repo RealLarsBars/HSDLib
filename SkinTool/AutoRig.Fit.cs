@@ -415,6 +415,7 @@ namespace SkinTool
                     if (!inShape[i])
                         ModelRegion[i] = ModelRegion[shapeIdx.MinBy(j => Vector3.DistanceSquared(pts[i], pts[j]))];
 
+            ApplyFixes(opt);
             TurnArms(pts, skeleton, opt, scale * grow);
 
             // A fighter whose legs part well below its hip joints (Ganondorf, under his tabard) swings its thighs

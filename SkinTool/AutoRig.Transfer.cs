@@ -32,7 +32,7 @@ namespace SkinTool
 
             // 1. blend the weights of the nearest fighter vertices
             float tallest = Positions.Max(q => q.Y) - Positions.Min(q => q.Y);
-            int headBone = !float.IsNaN(NeckY) && HeadBone >= 0 ? Remap[HeadBone] : -1;
+            int headBone = (!float.IsNaN(NeckY) || HeadFixed) && HeadBone >= 0 ? Remap[HeadBone] : -1;
             // the bone the head hangs from
             int bodyBone = -1;
             for (int a = HeadBone >= 0 ? Skel.Parent[HeadBone] : -1; a >= 0 && bodyBone < 0; a = Skel.Parent[a])
@@ -64,7 +64,7 @@ namespace SkinTool
                 // only the region's own bones and the body's (where a limb joins it); below the neck, not
                 // the head's: a model's chest can land on a fighter's big low head (Spyro's on Yoshi's), and
                 // then the whole body bobs and dips with the head
-                bool headless = region == Body && headBone >= 0 && Positions[i].Y < NeckYAt(Positions[i]) - tallest * 0.04f;
+                bool headless = region == Body && headBone >= 0 && BelowNeck(i, 0.04f, tallest);
                 var acc = new float[boneCount];
                 var any = new float[boneCount];
                 foreach (var (d, k) in nearest)
@@ -197,11 +197,11 @@ namespace SkinTool
             Smooth(w, sides, boneCount, opt.SmoothPasses, i => !Foot(i) && !ArmEnd(i));
             // the head is left out: on a model with few points and a big head (Spyro) the head's weights
             // would otherwise soak down through the whole body, and it all bobs with the head
-            bool belowNeck(int i) => float.IsNaN(NeckY) || HeadBone < 0 || Positions[i].Y < NeckYAt(Positions[i]) - tallest * 0.04f;
+            bool belowNeck(int i) => HeadBone < 0 || BelowNeck(i, 0.04f, tallest);
             Smooth(w, adj, boneCount, opt.BodySmoothPasses, i => ModelRegion[i] == Body && belowNeck(i));
 
             // 2b. above the neck everything follows the head alone, blending in over a short band
-            if (!float.IsNaN(NeckY) && HeadBone >= 0)
+            if ((!float.IsNaN(NeckY) || HeadFixed) && HeadBone >= 0)
             {
                 int head = Remap[HeadBone];
                 float h = Positions.Max(q => q.Y) - Positions.Min(q => q.Y);
@@ -210,7 +210,7 @@ namespace SkinTool
                     // arms held out at the fighter's shoulders can reach above a low neck line (Linguini's):
                     // they are still arms
                     float neckY = NeckYAt(Positions[i]);
-                    float k = SmoothStep(neckY - h * 0.04f, neckY + h * 0.02f, Positions[i].Y);
+                    float k = Fixed?[i] is PartKind fixedAs ? (fixedAs == PartKind.Head ? 1 : 0) : SmoothStep(neckY - h * 0.04f, neckY + h * 0.02f, Positions[i].Y);
                     if (k <= 0 || ModelRegion[i] == ArmLeft || ModelRegion[i] == ArmRight) continue;
                     for (int b = 0; b < boneCount; b++)
                         w[i][b] *= 1 - k;
@@ -230,7 +230,7 @@ namespace SkinTool
             // with the head, all others as one with the bones they follow on average, the head left out
             // (a face that dips a little below the neck line is still the head; BMO's box, a good part of it
             // below the line, is the body)
-            bool aboveNeck(List<int> members) => !float.IsNaN(NeckY) && members.Count(i => Positions[i].Y < NeckYAt(Positions[i])) * 4 < members.Count;
+            bool aboveNeck(List<int> members) => (!float.IsNaN(NeckY) || HeadFixed) && members.Count(i => BelowNeck(i, 0, 1)) * 4 < members.Count;
             var pieces = Enumerable.Range(0, Part.Max() + 1)
                 .Select(part => Enumerable.Range(0, n).Where(i => Part[i] == part).ToList())
                 .Where(members => members.Count > 0 && BodyPiece[members[0]])
@@ -719,9 +719,9 @@ namespace SkinTool
             }
             // a piece of the head reaching down below the head line onto the body (Rex's head and neck, one piece
             // sitting on his chest): there it's the body's, as a head that isn't a piece of its own is below the line
-            if (!float.IsNaN(NeckY) && HeadBone >= 0)
+            if ((!float.IsNaN(NeckY) || HeadFixed) && HeadBone >= 0)
             {
-                var below = Enumerable.Range(0, n).Where(i => Positions[i].Y < NeckYAt(Positions[i])).ToHashSet();
+                var below = Enumerable.Range(0, n).Where(i => BelowNeck(i, 0, 1)).ToHashSet();
                 var headParts = Enumerable.Range(0, n).GroupBy(i => Part[i]).Where(g => g.Count(below.Contains) * 4 < g.Count()).Select(g => g.Key).ToHashSet();
                 var body = Enumerable.Range(0, n).Where(i => Joinable(i) && below.Contains(i) && !headParts.Contains(Part[i])).ToArray();
                 float touch = 0.03f * tall;

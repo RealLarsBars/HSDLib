@@ -48,6 +48,11 @@ namespace SkinTool
             // the bones custom skins for this fighter use (from a bone map); null works them out
             public int[] Bones;
 
+            // parts set by hand ("this is an arm"), over what the rig finds
+            public List<PartFix> PartFixes;
+
+            public Options Copy() => (Options)MemberwiseClone();
+
             // the face bone from the bone map; -1 finds the head by itself
             public int Head = -1;
 
@@ -224,6 +229,8 @@ namespace SkinTool
             if (opt.Roles != null && opt.Roles.TryGetValue("lsh", out int lsh) && opt.Roles.TryGetValue("rsh", out int rsh))
                 rig.ShoulderY = (skeleton.Position(lsh).Y + skeleton.Position(rsh).Y) / 2;
             rig.Fit(model, fighter, skeleton, opt);
+            // later steps of the fit can move points between parts; the fixes by hand stand
+            rig.ApplyFixes(opt);
             if (opt.Roles != null && new[] { "lle", "rle" }.All(opt.Roles.ContainsKey))
             {
                 rig.LegJoints = (opt.Roles.GetValueOrDefault("butt", opt.Roles.GetValueOrDefault("body", -1)), opt.Roles["lle"], opt.Roles["rle"],
