@@ -710,7 +710,7 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
             }
             Console.Write(rig.Report);
             if (overlayPng != null)
-                Preview.Overlay(dats[0], fighterData, obj, rig.Positions, overlayPng, float.IsNaN(rig.NeckY) ? null : rig.NeckYAt);
+                Preview.Overlay(dats[0], fighterData, obj, rig.Positions, overlayPng, float.IsNaN(rig.NeckY) ? null : rig.NeckYAt, rig.NeckSlope != 0 ? rig.NeckZ : null);
             if (fitOnly)
                 return;
 
