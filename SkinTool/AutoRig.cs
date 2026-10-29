@@ -92,6 +92,9 @@ namespace SkinTool
             // follows the head bone alone, so a wide head or face is never read as arms and moves as one
             // piece. NaN works it out (a neck narrower than the head above it), 0 or less: no such line
             public float Neck = float.NaN;
+            // the neck line's lean, set by hand with Neck, in degrees (positive: down at the front, for a head
+            // tipped forward); a neck found on its own leans as much as the head does
+            public float NeckTilt = 0;
 
             // the model has a tail: the part sticking out behind it follows the fighter's tail bones, root
             // to tip (BoneMaps.Tails); otherwise everything behind follows the body
@@ -122,6 +125,12 @@ namespace SkinTool
 
         // the fitted height of the neck line (NaN when there's none)
         public float NeckY = float.NaN;
+        // the line leans with the head: it dips NeckSlope for each unit forward of NeckZ, out to NeckReach
+        // either way, then runs level (NeckTilt is the lean in degrees, positive down at the front)
+        public float NeckZ, NeckSlope, NeckReach, NeckTilt;
+
+        /// <summary>The height of the neck line at a point (float.MaxValue when there is none).</summary>
+        public float NeckYAt(Vector3 p) => float.IsNaN(NeckY) ? float.MaxValue : NeckY - NeckSlope * Math.Clamp(p.Z - NeckZ, -NeckReach, NeckReach);
         private int HeadBone = -1;
 
         // per model position, whether it's on the model's tail
@@ -231,6 +240,7 @@ namespace SkinTool
             for (int i = 0; i < Positions.Length; i++)
                 Positions[i] += by;
             NeckY += up;
+            NeckZ += opt.Forward * tall;
             // moved down on purpose: the floor guard lets it go that much lower
             Lowered = MathF.Max(-up, 0);
             Report += $"moved {opt.Forward:+0%;-0%;0%} forward and {opt.Up:+0%;-0%;0%} up\n";
@@ -647,19 +657,56 @@ namespace SkinTool
             var bodyReach = new float[slices];
             int top = Enumerable.Range(0, slices).Last(s => reach[s] > 0);
 
-            // the neck: above it is all head
+            // the neck: above it is all head. The cut leans with a head held tipped forward or back (Kermit's,
+            // Spyro's); a level neck keeps the line found on the outline, as before
             float neck = opt.Neck;
+            Neck cut = null;
+            float armsPast = float.MaxValue;
+            var cutTris = shapeTris.Select(t => (t.A.Position, t.B.Position, t.C.Position)).ToList();
             if (float.IsNaN(neck))
+            {
                 neck = FindNeck(pointReach, Typical(pointReach), Enumerable.Range(0, slices).Last(s => pointReach[s] > 0), modelCrotch);
+                var found = Neck.Find(pts, cutTris, min, size, modelCrotch);
+                // a short neck under a head no wider than the body (Kermit's) has no narrow spot in the outline
+                // seen from the front, but its cross-section still narrows. A neck found both ways keeps its
+                // level line unless the head clearly leans there (a cut along it is much smaller), and on a model stood
+                // up with --rotate (Spyro), whose neck reaches out between wings and horns, it stays level
+                // Found only this way, it has to stand out clearly: a tiny head sunk in a big collar (Gusteau's)
+                // bends better with the body than turning on its own.
+                if (found != null && (neck <= 0 ? found.Score >= 2.5f : Math.Abs(found.Tilt) > 5 && found.Gain >= 1.25f && Math.Abs(found.Share - neck) < 0.1f && opt.RotateX == 0 && opt.RotateZ == 0))
+                {
+                    cut = found;
+                    neck = found.Share;
+                }
+            }
+            else if (neck > 0)
+                cut = Neck.At(pts, cutTris, min, size, neck, opt.NeckTilt);
+            // a short neck, or a line set by hand, can sit as low as arms held out: what reaches well past the
+            // head (as wide as its top quarter gets) stays arms above the line too (the outline's own neck is
+            // always above them)
+            if (cut != null)
+            {
+                int headTop = Enumerable.Range(0, slices).Last(s => pointReach[s] > 0);
+                int headFrom = Math.Min(Math.Max(Slice(neck), slices * 3 / 4), headTop);
+                armsPast = Enumerable.Range(headFrom, headTop - headFrom + 1).Max(s => pointReach[s]) * 1.5f;
+            }
             int neckSlice = neck > 0 ? Slice(neck) : slices;
             if (neck > 0)
             {
                 NeckY = target.Y + neck * size.Y * scale * opt.Height;
-                Report += $"head: everything above {neck:P0} of the model's height follows the head ({(float.IsNaN(opt.Neck) ? "found a neck" : "set by hand")})\n";
+                if (cut != null)
+                {
+                    NeckZ = target.Z + (cut.Center.Z - origin.Z) * scale;
+                    NeckSlope = MathF.Tan(cut.Tilt * MathF.PI / 180) * opt.Height;
+                    NeckReach = cut.Reach * scale;
+                    NeckTilt = cut.Tilt;
+                }
+                string lean = NeckTilt == 0 ? "level" : $"leaning {Math.Abs(NeckTilt):0} degrees {(NeckTilt > 0 ? "down at the front" : "up at the front")}";
+                Report += $"head: everything above {neck:P0} of the model's height follows the head, {lean} ({(float.IsNaN(opt.Neck) ? "found a neck" : "set by hand")})\n";
             }
             for (int s = 0; s < slices; s++)
             {
-                if (reach[s] <= typical * 1.35f || s >= neckSlice)
+                if (reach[s] <= typical * 1.35f || s >= neckSlice && reach[s] <= armsPast)
                 {
                     bodyReach[s] = reach[s];
                     continue;
@@ -1170,9 +1217,8 @@ namespace SkinTool
             float root = typical * 1.1f;
             // a tail doesn't grow out of the head: big ears laid back (Remy's) reach out behind too, and on the
             // tail bones they swing and stretch with every flick of the fighter's tail
-            float top = float.IsNaN(NeckY) ? float.MaxValue : NeckY - h * 0.04f;
             var tail = Enumerable.Range(0, n).Where(i => reach[Slice(Positions[i].Y)] > typical * 1.35f
-                && MathF.Abs(Positions[i].X - cx) < halfW * 0.5f && cz - Positions[i].Z > root && Positions[i].Y < top).ToList();
+                && MathF.Abs(Positions[i].X - cx) < halfW * 0.5f && cz - Positions[i].Z > root && Positions[i].Y < NeckYAt(Positions[i]) - h * 0.04f).ToList();
             if (tail.Count < n * 0.01f)
             {
                 Report += "tail: none found behind the model; it follows the body\n";
@@ -1472,7 +1518,7 @@ namespace SkinTool
                 // only the region's own bones and the body's (where a limb joins it); below the neck, not
                 // the head's: a model's chest can land on a fighter's big low head (Spyro's on Yoshi's), and
                 // then the whole body bobs and dips with the head
-                bool headless = region == Body && headBone >= 0 && Positions[i].Y < NeckY - tallest * 0.04f;
+                bool headless = region == Body && headBone >= 0 && Positions[i].Y < NeckYAt(Positions[i]) - tallest * 0.04f;
                 var acc = new float[boneCount];
                 var any = new float[boneCount];
                 foreach (var (d, k) in nearest)
@@ -1571,7 +1617,7 @@ namespace SkinTool
             Smooth(w, sides, boneCount, opt.SmoothPasses, i => !Foot(i) && !ArmEnd(i));
             // the head is left out: on a model with few points and a big head (Spyro) the head's weights
             // would otherwise soak down through the whole body, and it all bobs with the head
-            bool belowNeck(int i) => float.IsNaN(NeckY) || HeadBone < 0 || Positions[i].Y < NeckY - tallest * 0.04f;
+            bool belowNeck(int i) => float.IsNaN(NeckY) || HeadBone < 0 || Positions[i].Y < NeckYAt(Positions[i]) - tallest * 0.04f;
             Smooth(w, adj, boneCount, opt.BodySmoothPasses, i => ModelRegion[i] == Body && belowNeck(i));
 
             // 2b. above the neck everything follows the head alone, blending in over a short band
@@ -1583,7 +1629,8 @@ namespace SkinTool
                 {
                     // arms held out at the fighter's shoulders can reach above a low neck line (Linguini's):
                     // they are still arms
-                    float k = SmoothStep(NeckY - h * 0.04f, NeckY + h * 0.02f, Positions[i].Y);
+                    float neckY = NeckYAt(Positions[i]);
+                    float k = SmoothStep(neckY - h * 0.04f, neckY + h * 0.02f, Positions[i].Y);
                     if (k <= 0 || ModelRegion[i] == ArmLeft || ModelRegion[i] == ArmRight) continue;
                     for (int b = 0; b < boneCount; b++)
                         w[i][b] *= 1 - k;
@@ -1603,7 +1650,7 @@ namespace SkinTool
             // with the head, all others as one with the bones they follow on average, the head left out
             // (a face that dips a little below the neck line is still the head; BMO's box, a good part of it
             // below the line, is the body)
-            bool aboveNeck(List<int> members) => !float.IsNaN(NeckY) && members.Count(i => Positions[i].Y < NeckY) * 4 < members.Count;
+            bool aboveNeck(List<int> members) => !float.IsNaN(NeckY) && members.Count(i => Positions[i].Y < NeckYAt(Positions[i])) * 4 < members.Count;
             var pieces = Enumerable.Range(0, Part.Max() + 1)
                 .Select(part => Enumerable.Range(0, n).Where(i => Part[i] == part).ToList())
                 .Where(members => members.Count > 0 && BodyPiece[members[0]])

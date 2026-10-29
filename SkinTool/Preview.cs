@@ -62,7 +62,7 @@ namespace SkinTool
         /// The fitted model laid over the original costume, front and side, in the bind pose, to see how its
         /// size and turn compare before building.
         /// </summary>
-        public static void Overlay(string costume, HSDRaw.Melee.Pl.SBM_FighterData fighter, ObjModel model, Vector3[] positions, string output, float neckY = float.NaN)
+        public static void Overlay(string costume, HSDRaw.Melee.Pl.SBM_FighterData fighter, ObjModel model, Vector3[] positions, string output, Func<Vector3, float> neckAt = null)
         {
             const int cell = 320;
             var root = (HSD_JOBJ)new HSDRawFile(costume).Roots[0].Data;
@@ -100,16 +100,38 @@ namespace SkinTool
                 var mine = drawn[v * 2 + 1];
                 fighterSheet.Draw(img, v * cell, 0);
                 img.Blend(mine, 0.6f);
-                // where the head starts: a dashed line, placed the way Render places heights
-                if (!float.IsNaN(neckY))
+                // where the head starts: a dashed line, placed the way Render places points; it leans with the
+                // head, so seen from the side it can tip
+                if (neckAt != null)
                 {
                     int hip = Math.Min(4, sk.Joints.Count - 1);
-                    int y = (int)MathF.Round(cell * 0.92f - (neckY - sk.Position(hip).Y + 8.3f) * cell / 26f);
-                    for (int x = 0; x < cell && y >= 0 && y < cell - 1; x++)
-                        if (x / 6 % 2 == 0)
-                            for (int dy = 0; dy < 2; dy++)
-                                foreach (var b in new[] { img, mine })
-                                    b.Set(x, y + dy, new Vector3(1f, 0.85f, 0.2f));
+                    var hips = sk.Position(hip);
+                    var view = Matrix4x4.CreateTranslation(-hips.X, -hips.Y + 8.3f, -hips.Z) * Matrix4x4.CreateRotationY(v * 90f * MathF.PI / 180);
+                    // across the picture: along x from the front, along z from the side; joined up, so where it
+                    // leans steeply it still reads as a line
+                    Vector2? last = null;
+                    for (int x = 0; x < cell; x++)
+                    {
+                        float across = (x - cell / 2f) * 26f / cell;
+                        var at = v == 0 ? new Vector3(hips.X + across, 0, hips.Z) : new Vector3(hips.X, 0, hips.Z - across);
+                        at.Y = neckAt(at);
+                        var q = Vector3.Transform(at, view);
+                        var here = new Vector2(cell / 2f + q.X * cell / 26f, cell * 0.92f - q.Y * cell / 26f);
+                        if (last is Vector2 from && x / 6 % 2 == 0)
+                        {
+                            int steps = (int)MathF.Ceiling(MathF.Max(MathF.Abs(here.X - from.X), MathF.Abs(here.Y - from.Y))) + 1;
+                            for (int k = 0; k <= steps; k++)
+                            {
+                                var p = Vector2.Lerp(from, here, (float)k / steps);
+                                int px = (int)MathF.Round(p.X), py = (int)MathF.Round(p.Y);
+                                for (int dy = 0; dy < 2; dy++)
+                                    if (px >= 0 && px < cell && py + dy >= 0 && py + dy < cell)
+                                        foreach (var b in new[] { img, mine })
+                                            b.Set(px, py + dy, new Vector3(1f, 0.85f, 0.2f));
+                            }
+                        }
+                        last = here;
+                    }
                 }
                 sheet.Draw(img, v * cell, 0);
                 modelSheet.Draw(mine, v * cell, 0);
