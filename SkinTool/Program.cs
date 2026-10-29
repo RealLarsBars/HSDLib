@@ -20,6 +20,7 @@ namespace SkinTool
 skintool models <zip|folder> --out <folder>
 skintool weapons <costume.dat>
 skintool stretch <costume.dat> <Pl**.dat> <Pl**AJ.dat>
+skintool compare <out.png> <old.dat> <new.dat> <Pl**.dat> <Pl**AJ.dat> [--original <costume.dat>]
 skintool portrait <out.png> <costume.dat> <Pl**.dat> <Pl**AJ.dat> [--anim Wait1] [--at 0] [--yaw -30]
 skintool inspect <costume.dat>
 skintool check <original.dat> <skin.dat>
@@ -76,6 +77,9 @@ models   Lists the models in a zip or folder and draws each one (<folder>/<n>.pn
 weapons  Lists the weapons a fighter holds, by the names --weapon takes.
 stretch  Poses a finished costume in the fighter's moves and warns about parts that get pulled apart
          (build does the same whenever it has --anims and --fighter).
+compare  Draws two builds of a skin (and the original costume, with --original) in the fighter's test
+         poses, one row each, and says how much of the picture changed and how the checks moved
+         (stretch, thin, floor), to see what a change to skintool did to a skin.
 inspect  Lists a costume's joints and meshes.
 check    Compares a finished skin with the original costume, as the build does.
 preview  Renders each costume in a few test poses, one row per costume.
@@ -116,6 +120,7 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
                     case "models": return Models(args.Skip(1).ToArray());
                     case "weapons": return ListWeapons(args[1]);
                     case "stretch": return Stretch(args);
+                    case "compare": return Compare(args);
                     case "portrait": return Portrait(args);
                     default:
                         Console.WriteLine(Usage);
@@ -630,6 +635,58 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
             var all = Animations.Load(args[2], args[3], Animations.AllPoses(args[2], 0, 0.25f, 0.5f, 0.75f));
             var (share, pose, bone) = Preview.ThinCheck(args[1], Slots.Load(args[2]), all);
             Console.WriteLine(FormattableString.Invariant($"thin check: {share:P1} of the skin's points squashed to under {Preview.ThinLimit:0%} of their depth in some of {all.Count} poses") + (pose != null ? $" (most in {pose}, mostly on bone {bone})" : ""));
+            return 0;
+        }
+
+        /// <summary>skintool compare out.png old.dat new.dat Pl**.dat Pl**AJ.dat [--original costume.dat]</summary>
+        static int Compare(string[] args)
+        {
+            string output = args[1], before = args[2], after = args[3], fighterDat = args[4], animDat = args[5];
+            int o = Array.IndexOf(args, "--original");
+            var rows = new List<string> { before, after };
+            if (o > 0)
+                rows.Add(args[o + 1]);
+            Preview.Run(new[] { "preview", output }.Concat(rows).Concat(new[] { "--anims", fighterDat, animDat }).ToArray(), _ => { });
+
+            // the two builds' rows, pixel by pixel: a pixel counts as changed when a colour moved by more than
+            // shading noise; the share is of the pixels either build draws on
+            StbImageSharp.ImageResult sheet;
+            using (var s = File.OpenRead(output))
+                sheet = StbImageSharp.ImageResult.FromStream(s, StbImageSharp.ColorComponents.RedGreenBlueAlpha);
+            int rowH = sheet.Height / rows.Count, cell = rowH, cells = sheet.Width / cell;
+            var changed = new int[cells];
+            var drawn = new int[cells];
+            bool Background(int i) => Math.Abs(sheet.Data[i] - 40) + Math.Abs(sheet.Data[i + 1] - 44) + Math.Abs(sheet.Data[i + 2] - 52) < 6;
+            for (int y = 0; y < rowH; y++)
+                for (int x = 0; x < sheet.Width; x++)
+                {
+                    int a = (y * sheet.Width + x) * 4, b = ((y + rowH) * sheet.Width + x) * 4;
+                    if (Background(a) && Background(b))
+                        continue;
+                    drawn[x / cell]++;
+                    int d = Math.Abs(sheet.Data[a] - sheet.Data[b]) + Math.Abs(sheet.Data[a + 1] - sheet.Data[b + 1]) + Math.Abs(sheet.Data[a + 2] - sheet.Data[b + 2]);
+                    if (d > 48)
+                        changed[x / cell]++;
+                }
+            float share = changed.Sum() / (float)Math.Max(drawn.Sum(), 1);
+            int worst = Enumerable.Range(0, cells).MaxBy(c => changed[c] / (float)Math.Max(drawn[c], 1));
+            var poses = new[] { "bind" }.Concat(Animations.Load(fighterDat, animDat, Animations.TestPoses).Select(p => p.Name)).ToArray();
+            Console.WriteLine(FormattableString.Invariant($"pictures: {share:P1} of the drawn pixels changed") +
+                (changed[worst] > 0 ? FormattableString.Invariant($" (most in {poses[Math.Min(worst / 2, poses.Length - 1)]} {(worst % 2 == 0 ? "front" : "side")}, {changed[worst] / (float)Math.Max(drawn[worst], 1):P0})") : ""));
+
+            // the checks the build runs, before and after
+            var fighter = Slots.Load(fighterDat);
+            var test = Animations.Load(fighterDat, animDat, Animations.TestPoses);
+            var all = Animations.Load(fighterDat, animDat, Animations.AllPoses(fighterDat, 0, 0.25f, 0.5f, 0.75f));
+            var low = Animations.Load(fighterDat, animDat, Animations.FloorPoses);
+            foreach (var (name, dat) in new[] { ("old", before), ("new", after) })
+            {
+                var stretch = Preview.StretchCheck(dat, fighter, test, _ => { });
+                var (thin, _, _) = Preview.ThinCheck(dat, fighter, all);
+                var floor = Preview.FloorDepth(dat, fighter, low);
+                float deepest = floor.Count > 0 ? floor.Min(f => f.Low) : 0;
+                Console.WriteLine(FormattableString.Invariant($"{name}: stretch {stretch ?? "ok"}; thin {thin:P1}; floor {deepest:0.0}"));
+            }
             return 0;
         }
 
