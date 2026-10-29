@@ -62,7 +62,7 @@ namespace SkinTool
         /// The fitted model laid over the original costume, front and side, in the bind pose, to see how its
         /// size and turn compare before building.
         /// </summary>
-        public static void Overlay(string costume, HSDRaw.Melee.Pl.SBM_FighterData fighter, ObjModel model, Vector3[] positions, string output, Func<Vector3, float> neckAt = null)
+        public static void Overlay(string costume, HSDRaw.Melee.Pl.SBM_FighterData fighter, ObjModel model, Vector3[] positions, string output, Func<Vector3, float> neckAt = null, float? neckZ = null)
         {
             const int cell = 320;
             var root = (HSD_JOBJ)new HSDRawFile(costume).Roots[0].Data;
@@ -108,12 +108,14 @@ namespace SkinTool
                     var hips = sk.Position(hip);
                     var view = Matrix4x4.CreateTranslation(-hips.X, -hips.Y + 8.3f, -hips.Z) * Matrix4x4.CreateRotationY(v * 90f * MathF.PI / 180);
                     // across the picture: along x from the front, along z from the side; joined up, so where it
-                    // leans steeply it still reads as a line
+                    // leans steeply it still reads as a line. From the front it's drawn where it crosses the middle
+                    // of the head (a leaning line is lower in front of that and higher behind), so it meets the
+                    // side view's line there rather than at the hips' depth
                     Vector2? last = null;
                     for (int x = 0; x < cell; x++)
                     {
                         float across = (x - cell / 2f) * 26f / cell;
-                        var at = v == 0 ? new Vector3(hips.X + across, 0, hips.Z) : new Vector3(hips.X, 0, hips.Z - across);
+                        var at = v == 0 ? new Vector3(hips.X + across, 0, neckZ ?? hips.Z) : new Vector3(hips.X, 0, hips.Z - across);
                         at.Y = neckAt(at);
                         var q = Vector3.Transform(at, view);
                         var here = new Vector2(cell / 2f + q.X * cell / 26f, cell * 0.92f - q.Y * cell / 26f);
