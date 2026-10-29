@@ -28,7 +28,10 @@ What `build` does, in the order the usual Blender + HSDRaw tutorial does it by h
    the model's body takes the fighter's body, its arms (whatever sticks out sideways) the arms, and
    anything under its crotch the legs. A model with stubby legs gets its feet on the fighter's feet
    and its body on the hips. Arms that sit far from the fighter's arms partly stay with the body, so
-   they don't get flung around the fighter's shoulders. Weights are smoothed over the surface, cut to
+   they don't get flung around the fighter's shoulders. Where the fighter's arms hang down in its bind pose
+   (Ganondorf), a model's arms held out in a T-pose are bent down to hang the same way, from where they
+   leave the model's body, and take their weights from the fighter's arms (keeping their own length, they bend at its elbow and wrist, a
+   separate hand goes with the sleeve it sits in, and they aren't stiffened to keep the hands off the floor). Weights are smoothed over the surface, cut to
    3 per vertex and normalized. Small separate pieces (claws, teeth, whiskers) move as one piece with
    the body around them. Above the neck everything follows the head alone (see Head below).
 3. **Import**: one mesh per texture, CMP textures (RGB5A3 when they have transparency), triangle strips.
@@ -47,6 +50,10 @@ Every costume given with `--dat` gets the same fit and weights; costumes whose b
 differently (Falcon's, Kirby's) get the model moved with their bones. `--textures PlFxGr.dat=green/`
 swaps in PNGs from another folder (matched by file name) for one costume. `--model` can be a .zip of
 the model and its textures, and an `--out` ending in `.zip` collects the costumes in one zip.
+
+**Second copies.** Rips sometimes carry two versions of one part on top of each other (Gusteau's gameplay
+and cutscene body and head). Drawn together they fight over which is in front and come apart in moves, so
+only one is kept: the one not named for cutscenes, or else the first.
 
 **Legs.** A model with no real legs (a round body on little feet) is found from its shape. Its body
 works as legs: the bottom 30% (`--leg-band`) bends with the fighter's legs, left half with the left
@@ -115,6 +122,9 @@ costume without building, to check its size and turn.
 
 Other commands:
 
+- `export <out.obj> <skin.dat> [--fighter Pl**.dat]`: writes a finished skin's model back out (OBJ, MTL and
+  textures, in its bind pose) to build it again with a newer skintool when the model it came from is gone.
+  With the fighter's data, its weapons go in their own OBJs beside it (`sword.obj`, for `--weapon`).
 - `check <original.dat> <skin.dat>`: same skeleton, flags and mesh count; weights valid.
 - `preview <out.png> <costume.dat>... [--anims Pl**.dat Pl**AJ.dat]`: renders each costume in test
   poses, or in the fighter's real animations when given its data and animation files.

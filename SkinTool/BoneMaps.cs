@@ -43,7 +43,7 @@ namespace SkinTool
             ["Pr"] = "body=6 lsh=29 lha=30 rsh=33 rha=35 lfb=40 lff=41 rfb=45 rff=47",
             ["Sk"] = "face=35 body=18 butt=17 lsh=20 lel=22 lha=23 rsh=40 rel=42 rha=43 lle=6 lkn=7 lfb=9 lff=10 rle=12 rkn=13 rfb=15 rff=16",
             ["Ss"] = "face=42 body=20 butt=4 lpad=22 rpad=44 lsh=26 lel=27 lha=38 rsh=48 rel=49 rha=55 lle=6 lkn=7 lfb=9 lff=11 rle=13 rkn=14 rfb=16 rff=18",
-            ["Ys"] = "face=38 body=22 butt=19 tail1=20 tail2=21 lsh=26 lel=27 lha=28 rsh=56 rel=57 rha=58 lle=6 lkn=7 lfb=9 lff=10 rle=12 rkn=14 rfb=15 rff=17",
+            ["Ys"] = "face=38 body=22 hips=4 butt=19 tail1=20 tail2=21 lsh=26 lel=27 lha=28 rsh=56 rel=57 rha=58 lle=6 lkn=7 lfb=9 lff=10 rle=12 rkn=14 rfb=15 rff=17",
             ["Zd"] = "face=89 body=67 lsh=72 lel=73 lha=76 rsh=100 rel=101 rha=104 lle=5 lkn=7 lfb=9 lff=10 rle=11 rkn=13 rfb=15 rff=16",
         };
 
