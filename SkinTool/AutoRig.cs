@@ -688,6 +688,13 @@ namespace SkinTool
             {
                 int headTop = Enumerable.Range(0, slices).Last(s => pointReach[s] > 0);
                 int headFrom = Math.Min(Math.Max(Slice(neck), slices * 3 / 4), headTop);
+                // arms held out right at the line (Moe's, a hunched head sitting low between his shoulders)
+                // aren't the head: it starts above them, unless that wide stretch runs up to the top (a big head)
+                int wideTo = headFrom;
+                while (wideTo < headTop && pointReach[wideTo] > typical * 1.35f)
+                    wideTo++;
+                if (wideTo > headFrom && wideTo < headTop - slices / 10)
+                    headFrom = wideTo;
                 armsPast = Enumerable.Range(headFrom, headTop - headFrom + 1).Max(s => pointReach[s]) * 1.5f;
             }
             int neckSlice = neck > 0 ? Slice(neck) : slices;
