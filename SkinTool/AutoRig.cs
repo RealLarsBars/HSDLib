@@ -125,12 +125,12 @@ namespace SkinTool
 
         // the fitted height of the neck line (NaN when there's none)
         public float NeckY = float.NaN;
-        // the line leans with the head: it dips NeckSlope for each unit forward of NeckZ, out to NeckReach
-        // either way, then runs level (NeckTilt is the lean in degrees, positive down at the front)
-        public float NeckZ, NeckSlope, NeckReach, NeckTilt;
+        // the line leans with the head: it dips NeckSlope for each unit forward of NeckZ (NeckTilt is the
+        // lean in degrees, positive down at the front)
+        public float NeckZ, NeckSlope, NeckTilt;
 
         /// <summary>The height of the neck line at a point (float.MaxValue when there is none).</summary>
-        public float NeckYAt(Vector3 p) => float.IsNaN(NeckY) ? float.MaxValue : NeckY - NeckSlope * Math.Clamp(p.Z - NeckZ, -NeckReach, NeckReach);
+        public float NeckYAt(Vector3 p) => float.IsNaN(NeckY) ? float.MaxValue : NeckY - NeckSlope * (p.Z - NeckZ);
         private int HeadBone = -1;
 
         // per model position, whether it's on the model's tail
@@ -680,7 +680,7 @@ namespace SkinTool
                 }
             }
             else if (neck > 0)
-                cut = Neck.At(pts, cutTris, min, size, neck, opt.NeckTilt);
+                cut = Neck.At(pts, min, size, neck, opt.NeckTilt);
             // a short neck, or a line set by hand, can sit as low as arms held out: what reaches well past the
             // head (as wide as its top quarter gets) stays arms above the line too (the outline's own neck is
             // always above them)
@@ -698,7 +698,6 @@ namespace SkinTool
                 {
                     NeckZ = target.Z + (cut.Center.Z - origin.Z) * scale;
                     NeckSlope = MathF.Tan(cut.Tilt * MathF.PI / 180) * opt.Height;
-                    NeckReach = cut.Reach * scale;
                     NeckTilt = cut.Tilt;
                 }
                 string lean = NeckTilt == 0 ? "level" : $"leaning {Math.Abs(NeckTilt):0} degrees {(NeckTilt > 0 ? "down at the front" : "up at the front")}";

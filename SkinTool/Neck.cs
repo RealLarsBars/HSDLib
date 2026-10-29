@@ -12,7 +12,8 @@ namespace SkinTool
     /// across at each height, for each lean, and the cross-section around the head's middle measured
     /// (the outline it makes, ears and hair hanging beside it left out): the neck is a narrow spot with a
     /// wider head above and body below, so a short neck that only narrows a little still shows up. The cut
-    /// then turns about the narrowest spot to cross the neck straight, and a straight neck stays level.
+    /// then turns about the narrowest spot to cross the neck straight (one straight line, leaning all the
+    /// way across), and a straight neck stays level.
     /// </summary>
     public class Neck
     {
@@ -22,9 +23,6 @@ namespace SkinTool
         public float Tilt;
         // its height at the middle of the neck, as a share of the model's height
         public float Share;
-        // how far either side of the middle (front to back) the cut leans before running level, so it doesn't
-        // swing far up or down across a wide body
-        public float Reach;
         // how much wider the head and the body are than the neck (cross-section areas, 1 = no narrowing)
         public float Score;
         // how much smaller the cut's cross-section is than a level one's at the same spot
@@ -66,14 +64,15 @@ namespace SkinTool
             int cut = from;
             while (cut < best.Top && best.Area[cut + 1] <= narrow * 1.56f)
                 cut++;
-            var center = best.Point(cut);
+            // (straight up the cut's own direction from the neck's middle: the outline followed higher up can
+            // be a hand or a sword held out at that height)
+            var center = pivot + (cut - from) * best.Step * best.N;
             return new Neck
             {
                 Center = center,
                 Tilt = best.Tilt,
                 Share = (center.Y - min.Y) / size.Y,
                 // across the head's width (the chin of a head tipped forward hangs well in front of the neck)
-                Reach = MathF.Max(MathF.Max(2 * MathF.Sqrt(narrow / MathF.PI), MathF.Sqrt(head.Max(s => clearest.Area[s]) / MathF.PI)), size.Y * 0.05f),
                 Score = clearest.Score,
                 Gain = scans.First(k => k.Tilt == 0) is var level && across[level] > 0 ? across[level] / narrow : 1,
             };
@@ -83,7 +82,7 @@ namespace SkinTool
         /// A cut set by hand: at <paramref name="share"/> of the height through the middle of the model's
         /// upper body there, leaning <paramref name="tilt"/> degrees.
         /// </summary>
-        public static Neck At(Vector3[] pts, IList<(int a, int b, int c)> tris, Vector3 min, Vector3 size, float share, float tilt)
+        public static Neck At(Vector3[] pts, Vector3 min, Vector3 size, float share, float tilt)
         {
             float y = min.Y + share * size.Y;
             float cx = min.X + size.X / 2;
@@ -92,11 +91,7 @@ namespace SkinTool
             var near = pts.Where(p => MathF.Abs(p.Y - y) < size.Y * 0.03f && MathF.Abs(p.X - cx) < size.X * 0.15f).ToList();
             if (near.Count > 0)
                 at.Z = near.Average(p => p.Z);
-            Axes(tilt, out var n, out var e);
-            float area = Around(Cut(pts, tris, Weld(pts, size), n, e, Vector3.Dot(at, n)), new Vector2(at.X, Vector3.Dot(at, e)), size.X * 0.1f)?.Area ?? 0;
-            var neck = new Neck { Center = at, Tilt = tilt, Share = share };
-            neck.Reach = MathF.Max(2 * MathF.Sqrt(MathF.Max(area, 0) / MathF.PI), size.Y * 0.1f);
-            return neck;
+            return new Neck { Center = at, Tilt = tilt, Share = share };
         }
 
         // one lean: the model's cross-sections along it, and the profile of the one around the head's
@@ -136,14 +131,17 @@ namespace SkinTool
 
             // start on the biggest outline in the top third (the head, not an ear or a hat's tip), then follow
             // the outline around that middle down the model
-            var start = sec.Skip(top - Slices / 3).SelectMany(c => c).DefaultIfEmpty().MaxBy(c => c?.Area ?? 0);
+            float cx = min.X + size.X / 2;
+            var start = sec.Skip(top - Slices / 3).SelectMany(c => c).Where(c => MathF.Abs(c.Middle.X - cx) < size.X * 0.25f)
+                .DefaultIfEmpty().MaxBy(c => c?.Area ?? 0);
             if (start == null)
                 return k;
             var axis = start.Middle;
             float radius = MathF.Sqrt(start.Area / MathF.PI);
             for (int s = top; s >= 0; s--)
             {
-                var pick = Around(sec[s], axis, radius);
+                // (only outlines around the model's middle: not a hand or a sword held out)
+                var pick = Around(sec[s].Where(c => MathF.Abs(c.Middle.X - cx) < size.X * 0.25f).ToList(), axis, radius);
                 area[s] = pick?.Area ?? 0;
                 if (area[s] > 0)
                 {

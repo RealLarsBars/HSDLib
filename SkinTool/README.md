@@ -88,8 +88,9 @@ line then takes the chin with the chest or the back of the chest with the head. 
 model across at every height, leaning from -35 to 35 degrees, and measures the outline around the head's
 middle (ears and hair hanging beside the neck are separate outlines and left out): a neck is a narrow
 spot there with a clearly wider head above and body below. The cut then turns about the narrowest spot
-to cross the neck straight, leaning only when that is clearly smaller than level, and runs level again
-past the neck so it can't swing up or down across a wide body. This also finds short necks under a head
+to cross the neck straight, leaning only when that is clearly smaller than level; it is one straight
+line, leaning all the way across. Only outlines around the model's middle are followed, so a hand or a
+sword held out at neck height can't pull the line onto itself. This also finds short necks under a head
 no wider than the body (Kermit's), which the front outline misses. A level neck found by the outline
 keeps its line as before; a model stood up with `--rotate` x/z (Spyro) keeps a level one; a tiny head
 sunk in a big collar (Gusteau's) gets no line, since it bends better with the body. `--neck-tilt 20`
