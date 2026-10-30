@@ -286,6 +286,22 @@ picks which the skin gets:
 `skintool models` lists the keys of each model (`eyes <n> <key> default|choice <label>`) and draws a
 close-up of each state (`<n>-eyes-<key>.png`) for the panel to pick from.
 
+## Clothes in several versions
+
+Some rips carry every outfit the character wears in one model, on top of each other, for the game to show
+one at a time: Tom Nook (Animal Crossing: New Horizons) has three tops (`TopsRcoOuterL`, `TopsRcoYshirtH`,
+`Tops__mTops`) and three bottoms (`BottomsRcoPantsHalf`, `...Normal00`, `...Normal01`). Drawn together they
+show through each other. Pieces whose names start with the same kind of clothing (tops, bottoms, shirt,
+pants, hat, shoes, ...) and sit over the same part of the model, about as big, are versions of one slot;
+a piece named after another plus more (`BottomsRcoPantsHalf__mSoftmesh`) goes with it. Only clothing names
+count, since body pieces are often named alike (Moe's `moe-bodyshape_0` and `_1`).
+
+Each slot keeps one version: `--outfit tops=rcoyshirth,bottoms=half` (or `outfit = ...` in skin.txt), the
+first version by default, or `all` to keep them all. This runs before the check for second copies, since
+versions can be the same shape in other colours (Nook's two long trousers). `skintool models` prints
+`outfit <n> <slot> <key> default|choice <label>` and draws `<n>-outfit-<slot>-<key>.png` for each version
+(and `all`), with the other slots at their default.
+
 ## Pieces that touch
 
 A model made of separate pieces (a shirt with the arms as their own meshes, legs inside a pair of shorts)
