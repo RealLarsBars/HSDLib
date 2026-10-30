@@ -16,10 +16,12 @@ namespace SkinTool
                [--fighter <Pl**.dat>] [--bones 41,22,...] [--scale 1.0] [--width 1.0] [--height 1.0] [--rotate 0 | x,y,z] [--move forward[,up]] [--textures <costume.dat>=<folder> ...]
                [--legs auto|separate|body|cut|dress] [--clothes outside|legs] [--arms auto|fighter|body] [--arm-angle auto|40] [--neck auto|none|0.6 [--neck-tilt 0]] [--tail yes|no] [--attach yes|no] [--style normal|animelee] [--eyes <key>] [--leg-band 0.3] [--keep-shape]
                [--pick <model in the zip or folder>] [--weapon <name>=<model|zip> [--weapon-pick <name>=<model>] [--weapon-flip <name>] ...]
-               [--preview <out.png> [--anims <Pl**AJ.dat>]] [--overlay <out.png> [--fit-only]] [--portraits <folder>]
+               [--preview <out.png> [--anims <Pl**AJ.dat>]] [--overlay <out.png> [--fit-only]] [--parts <out.png>] [--part <point|front:x,y>=<part>[@reach] ...] [--portraits <folder>]
 skintool models <zip|folder> --out <folder>
 skintool weapons <costume.dat>
 skintool stretch <costume.dat> <Pl**.dat> <Pl**AJ.dat>
+skintool gap <costume.dat> <original.dat> <Pl**.dat> <Pl**AJ.dat> [<out.png>]
+skintool compare <out.png> <old.dat> <new.dat> <Pl**.dat> <Pl**AJ.dat> [--original <costume.dat>]
 skintool portrait <out.png> <costume.dat> <Pl**.dat> <Pl**AJ.dat> [--anim Wait1] [--at 0] [--yaw -30]
 skintool inspect <costume.dat>
 skintool check <original.dat> <skin.dat>
@@ -64,6 +66,14 @@ build    Swaps the model into every costume given, keeping each costume's skelet
          The same rules can come with the model in a skin.txt next to the OBJ (""legs = body"").
          --overlay draws the fitted model over the first costume, to check its size; with --fit-only
          that's all it does (no costumes are written, --out isn't needed).
+         --parts draws the part map: the fitted model coloured by the part each point went in (head, body,
+         arms, legs, tail, clothes), framed like --overlay.
+         --part puts a spot of the model in a part by hand, over what was found: a point (as a part fix
+         line printed it) or a spot on the overlay or part map (front:x,y, x past 320 is the side view), then
+         = body, head, arm, leg or tail, and @reach how far around it along the surface (a share of the
+         height, 0.25 by default; only over points found in the same part as the spot).
+         --check-picture draws the move a check warns about (pieces coming apart), the skin beside the
+         character, when there is one.
          --pick chooses the model when a zip or folder holds more than one.
          --weapon swaps one of the fighter's weapons (pan, sword, hammer; see weapons) for another model,
          fitted over the original; --weapon-flip turns it end for end. Weapons not given keep the costume's own.
@@ -76,6 +86,11 @@ models   Lists the models in a zip or folder and draws each one (<folder>/<n>.pn
 weapons  Lists the weapons a fighter holds, by the names --weapon takes.
 stretch  Poses a finished costume in the fighter's moves and warns about parts that get pulled apart
          (build does the same whenever it has --anims and --fighter).
+compare  Draws two builds of a skin (and the original costume, with --original) in the fighter's test
+         poses, one row each, and says how much of the picture changed and how the checks moved
+         (stretch, thin, floor, gap), to see what a change to skintool did to a skin.
+gap      Whether separate pieces of a finished costume come apart in the fighter's moves (how far, and
+         where); with <out.png>, draws that pose, the skin beside the original costume.
 inspect  Lists a costume's joints and meshes.
 check    Compares a finished skin with the original costume, as the build does.
 preview  Renders each costume in a few test poses, one row per costume.
@@ -116,6 +131,17 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
                     case "models": return Models(args.Skip(1).ToArray());
                     case "weapons": return ListWeapons(args[1]);
                     case "stretch": return Stretch(args);
+                    case "compare": return Compare(args);
+                    case "gap":
+                        {
+                            var data = Slots.Load(args[3]);
+                            var all = Animations.Load(args[3], args[4], Animations.AllPoses(args[3], 0, 0.5f));
+                            var (gap, pose, bone) = Preview.GapCheck(args[1], data, all);
+                            Console.WriteLine(FormattableString.Invariant($"gap check: pieces open up to {gap:P1} of the height") + (pose != null ? $" (in {pose.Name}, the piece on bone {bone})" : ""));
+                            if (pose != null && args.Length > 5)
+                                Preview.PoseSheet(args[1], args[2], data, pose, args[5]);
+                            return 0;
+                        }
                     case "portrait": return Portrait(args);
                     default:
                         Console.WriteLine(Usage);
@@ -443,7 +469,7 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
 
         static int Build(string[] args)
         {
-            string model = null, outDir = null, fighterDat = null, previewPng = null, animDat = null, pick = null, overlayPng = null, portraitDir = null;
+            string model = null, outDir = null, fighterDat = null, previewPng = null, animDat = null, pick = null, overlayPng = null, portraitDir = null, partsPng = null, checkPng = null;
             bool fitOnly = false;
             var weaponFiles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var weaponPicks = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -485,6 +511,9 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
                     case "--pick": pick = Next(); break;
                     case "--overlay": overlayPng = Next(); break;
                     case "--fit-only": fitOnly = true; break;
+                    case "--parts": partsPng = Next(); break;
+                    case "--check-picture": checkPng = Next(); break;
+                    case "--part": (opt.PartFixes ??= new()).Add(AutoRig.PartFix.Parse(Next())); break;
                     case "--portraits": portraitDir = Next(); break;
                     case "--weapon":
                         var w = Next().Split('=', 2);
@@ -545,7 +574,7 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
                 }
 
                 ReadRules(model, opt, args.Where(a => a.StartsWith("--")).ToHashSet());
-                BuildCostumes(model, dats, outDir, fighterDat, textureFolders, opt, uploads, overlayPng, fitOnly, animDat);
+                BuildCostumes(model, dats, outDir, fighterDat, textureFolders, opt, uploads, overlayPng, fitOnly, animDat, partsPng);
 
                 // the preview, the stretch check and the portraits only read the costumes, so they're drawn
                 // side by side; what they say prints in the same order as before
@@ -569,7 +598,23 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
                     if (animDat == null || fighterDat == null || fitOnly)
                         return null;
                     var poses = Animations.Load(fighterDat, animDat, Animations.TestPoses);
-                    return Preview.StretchCheck(Path.Combine(outDir, Path.GetFileName(dats[0])), Slots.Load(fighterDat), poses, stretchSaid.Add);
+                    var skin = Path.Combine(outDir, Path.GetFileName(dats[0]));
+                    var data = Slots.Load(fighterDat);
+                    var stretch = Preview.StretchCheck(skin, data, poses, stretchSaid.Add);
+                    // pieces coming apart (a head lifting off its neck), over all the fighter's moves
+                    var all = Animations.Load(fighterDat, animDat, Animations.AllPoses(fighterDat, 0, 0.5f));
+                    var (gap, pose, bone) = Preview.GapCheck(skin, data, all);
+                    stretchSaid.Add(FormattableString.Invariant($"gap check: pieces open up to {gap:P1} of the height") + (pose != null ? $" (in {pose.Name})" : ""));
+                    if (gap >= Preview.GapWarn)
+                    {
+                        if (checkPng != null)
+                        {
+                            Preview.PoseSheet(skin, dats[0], data, pose, checkPng);
+                            stretchSaid.Add($"check picture: {checkPng} ({pose.Name}: the skin, front and side, then the character)");
+                        }
+                        stretchSaid.Add(FormattableString.Invariant($"warning: a piece of the skin moves {gap:P0} of the height away from the piece it touches (worst in {pose.Name}). If it looks like it's coming off in that move, try Keep parts attached, or a part fix on the Parts map."));
+                    }
+                    return stretch;
                 });
 
                 // a character select portrait of each costume, next to it (PlFxNr_csp.png) and in --portraits
@@ -630,6 +675,61 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
             var all = Animations.Load(args[2], args[3], Animations.AllPoses(args[2], 0, 0.25f, 0.5f, 0.75f));
             var (share, pose, bone) = Preview.ThinCheck(args[1], Slots.Load(args[2]), all);
             Console.WriteLine(FormattableString.Invariant($"thin check: {share:P1} of the skin's points squashed to under {Preview.ThinLimit:0%} of their depth in some of {all.Count} poses") + (pose != null ? $" (most in {pose}, mostly on bone {bone})" : ""));
+            var (gap, gapPose, gapBone) = Preview.GapCheck(args[1], Slots.Load(args[2]), all);
+            Console.WriteLine(FormattableString.Invariant($"gap check: pieces open up to {gap:P1} of the height") + (gapPose != null ? $" (in {gapPose.Name}, the piece on bone {gapBone})" : ""));
+            return 0;
+        }
+
+        /// <summary>skintool compare out.png old.dat new.dat Pl**.dat Pl**AJ.dat [--original costume.dat]</summary>
+        static int Compare(string[] args)
+        {
+            string output = args[1], before = args[2], after = args[3], fighterDat = args[4], animDat = args[5];
+            int o = Array.IndexOf(args, "--original");
+            var rows = new List<string> { before, after };
+            if (o > 0)
+                rows.Add(args[o + 1]);
+            Preview.Run(new[] { "preview", output }.Concat(rows).Concat(new[] { "--anims", fighterDat, animDat }).ToArray(), _ => { });
+
+            // the two builds' rows, pixel by pixel: a pixel counts as changed when a colour moved by more than
+            // shading noise; the share is of the pixels either build draws on
+            StbImageSharp.ImageResult sheet;
+            using (var s = File.OpenRead(output))
+                sheet = StbImageSharp.ImageResult.FromStream(s, StbImageSharp.ColorComponents.RedGreenBlueAlpha);
+            int rowH = sheet.Height / rows.Count, cell = rowH, cells = sheet.Width / cell;
+            var changed = new int[cells];
+            var drawn = new int[cells];
+            bool Background(int i) => Math.Abs(sheet.Data[i] - 40) + Math.Abs(sheet.Data[i + 1] - 44) + Math.Abs(sheet.Data[i + 2] - 52) < 6;
+            for (int y = 0; y < rowH; y++)
+                for (int x = 0; x < sheet.Width; x++)
+                {
+                    int a = (y * sheet.Width + x) * 4, b = ((y + rowH) * sheet.Width + x) * 4;
+                    if (Background(a) && Background(b))
+                        continue;
+                    drawn[x / cell]++;
+                    int d = Math.Abs(sheet.Data[a] - sheet.Data[b]) + Math.Abs(sheet.Data[a + 1] - sheet.Data[b + 1]) + Math.Abs(sheet.Data[a + 2] - sheet.Data[b + 2]);
+                    if (d > 48)
+                        changed[x / cell]++;
+                }
+            float share = changed.Sum() / (float)Math.Max(drawn.Sum(), 1);
+            int worst = Enumerable.Range(0, cells).MaxBy(c => changed[c] / (float)Math.Max(drawn[c], 1));
+            var poses = new[] { "bind" }.Concat(Animations.Load(fighterDat, animDat, Animations.TestPoses).Select(p => p.Name)).ToArray();
+            Console.WriteLine(FormattableString.Invariant($"pictures: {share:P1} of the drawn pixels changed") +
+                (changed[worst] > 0 ? FormattableString.Invariant($" (most in {poses[Math.Min(worst / 2, poses.Length - 1)]} {(worst % 2 == 0 ? "front" : "side")}, {changed[worst] / (float)Math.Max(drawn[worst], 1):P0})") : ""));
+
+            // the checks the build runs, before and after
+            var fighter = Slots.Load(fighterDat);
+            var test = Animations.Load(fighterDat, animDat, Animations.TestPoses);
+            var all = Animations.Load(fighterDat, animDat, Animations.AllPoses(fighterDat, 0, 0.25f, 0.5f, 0.75f));
+            var low = Animations.Load(fighterDat, animDat, Animations.FloorPoses);
+            foreach (var (name, dat) in new[] { ("old", before), ("new", after) })
+            {
+                var stretch = Preview.StretchCheck(dat, fighter, test, _ => { });
+                var (thin, _, _) = Preview.ThinCheck(dat, fighter, all);
+                var floor = Preview.FloorDepth(dat, fighter, low);
+                float deepest = floor.Count > 0 ? floor.Min(f => f.Low) : 0;
+                var (gap, _, _) = Preview.GapCheck(dat, fighter, all);
+                Console.WriteLine(FormattableString.Invariant($"{name}: stretch {stretch ?? "ok"}; thin {thin:P1}; floor {deepest:0.0}; gap {gap:P1}"));
+            }
             return 0;
         }
 
@@ -660,7 +760,7 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
             return 0;
         }
 
-        static void BuildCostumes(string model, List<string> dats, string outDir, string fighterDat, Dictionary<string, string> textureFolders, AutoRig.Options opt, Dictionary<string, Weapons.Upload> uploads, string overlayPng = null, bool fitOnly = false, string animDat = null)
+        static void BuildCostumes(string model, List<string> dats, string outDir, string fighterDat, Dictionary<string, string> textureFolders, AutoRig.Options opt, Dictionary<string, Weapons.Upload> uploads, string overlayPng = null, bool fitOnly = false, string animDat = null, string partsPng = null)
         {
             if (!fitOnly)
                 Directory.CreateDirectory(outDir);
@@ -698,6 +798,9 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
             opt.Dress = opt.OwnDress || opt.Legs == "dress";
             if (opt.Legs == "dress")
                 opt.Legs = "separate";
+            // a part put in the tail by hand needs the tail bones
+            if (opt.PartFixes != null && opt.PartFixes.Any(f => f.Kind == AutoRig.PartKind.Tail))
+                opt.HasTail = true;
             if (opt.HasTail)
             {
                 var weighted = BoneMaps.Weighted(firstRoot);
@@ -710,6 +813,22 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
                     if (opt.Bones != null)
                         opt.Bones = opt.Bones.Concat(tail).Distinct().ToArray();
                 }
+            }
+            // spots clicked on the part map are found on the model as fitted without them, then fitted again
+            // with them; the report gives the point each one was, so the panel can keep it as a point
+            var spots = opt.PartFixes?.Where(f => f.Point < 0).ToList() ?? new();
+            if (spots.Count > 0)
+            {
+                var without = opt.Copy();
+                without.PartFixes = opt.PartFixes.Except(spots).ToList();
+                var unfixed = AutoRig.Run(obj.Copy(deep: true), fighter, skeleton, without);
+                foreach (var fix in spots)
+                {
+                    string spot = fix.ToString();
+                    fix.Point = Preview.PointAt(dats[0], unfixed.Positions, fix.View == "side" || fix.X >= 320 ? "side" : "front", fix.X, fix.Y);
+                    Console.WriteLine(fix.Point >= 0 ? $"part fix: {spot} is point {fix.Point}" : $"part fix: {spot} isn't on the model; left out");
+                }
+                opt.PartFixes.RemoveAll(f => f.Point < 0);
             }
             var rig = AutoRig.Run(obj, fighter, skeleton, opt);
             // the fighter's moves, to keep the skin out of the floor in its low ones. Only the weights
@@ -725,6 +844,8 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
             Console.Write(rig.Report);
             if (overlayPng != null)
                 Preview.Overlay(dats[0], fighterData, obj, rig.Positions, overlayPng, float.IsNaN(rig.NeckY) ? null : rig.NeckYAt, rig.NeckSlope != 0 ? rig.NeckZ : null);
+            if (partsPng != null)
+                Preview.PartMap(dats[0], fighterData, obj, rig.Positions, rig.Labels(), partsPng);
             if (fitOnly)
                 return;
 

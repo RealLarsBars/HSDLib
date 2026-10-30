@@ -33,7 +33,7 @@ namespace HSDRaw.Tools
 
         public GenCullMode CullMode { get; set; } = GenCullMode.Front;
 
-        private Dictionary<GXAttribName, Dictionary<int, int>> nameToIndexHash = new Dictionary<GXAttribName, Dictionary<int, int>>();
+        private Dictionary<GXAttribName, Dictionary<float[], int>> nameToIndexHash = new Dictionary<GXAttribName, Dictionary<float[], int>>();
         private Dictionary<GXAttribName, GX_Attribute> nameToAttr = new Dictionary<GXAttribName, GX_Attribute>();
         private Dictionary<GX_Attribute, List<float[]>> attrToNewData = new Dictionary<GX_Attribute, List<float[]>>();
         
@@ -140,7 +140,7 @@ namespace HSDRaw.Tools
             {
                 GX_Attribute a = new GX_Attribute();
                 a.AttributeName = attributeName;
-                nameToIndexHash.Add(attributeName, new Dictionary<int, int>());
+                nameToIndexHash.Add(attributeName, new Dictionary<float[], int>(new FloatArrayComparer()));
                 nameToAttr.Add(attributeName, a);
                 attrToNewData.Add(a, new List<float[]>());
             }
@@ -149,21 +149,29 @@ namespace HSDRaw.Tools
 
             var index = 0;
 
-            var hash = GetApproximateFloatArrayHashCode(o);
-            
-            if (hashToIndex.ContainsKey(hash))
+            // values are matched exactly: matching on the hash alone merged different values whose hashes
+            // happened to collide, and the hash is seeded per process, so a vertex now and then jumped to
+            // another vertex's place, differently each run
+            if (hashToIndex.TryGetValue(o, out var found))
             {
-                index = hashToIndex[hash];
+                index = found;
             }
             else
             {
                 var vals = attrToNewData[nameToAttr[attributeName]];
                 index = vals.Count;
                 vals.Add(o);
-                hashToIndex.Add(hash, index);
+                hashToIndex.Add(o, index);
             }
             
             return (ushort)index;
+        }
+
+        class FloatArrayComparer : IEqualityComparer<float[]>
+        {
+            public bool Equals(float[] x, float[] y) => ((IStructuralEquatable)x).Equals(y, EqualityComparer<float>.Default);
+
+            public int GetHashCode(float[] obj) => GetApproximateFloatArrayHashCode(obj);
         }
 
         class UnorderedTupleArrayComparer : IEqualityComparer<(int, float)[]>

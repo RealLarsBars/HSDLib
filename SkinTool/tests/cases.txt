@@ -1,0 +1,34 @@
+# Skins regress.sh rebuilds, one per line: name, fighter code, model (in the models folder), then build
+# options as the panel passes them. Every skin here once looked right to Alex or fixed something they reported,
+# so a change shouldn't move them unless it's meant to. Panel builds always pass --anims; regress.sh does too.
+monty-fx       Fx monty.zip
+monty-pe       Pe monty.zip
+monty-ms       Ms monty.zip
+monty-ca       Ca monty.zip
+monty-pp       Pp monty.zip
+monty-kb       Kb monty.zip
+monty-mr       Mr monty.zip
+monty-gn       Gn monty.zip
+squidward-fx   Fx squidward.zip --pick "Squidward Tentacles/SK_MP_Squidward_Bandaged.dae"
+squidward-pe   Pe squidward.zip --pick "Squidward Tentacles/SK_MP_Squidward_Bandaged.dae"
+squidward-ms   Ms squidward.zip --pick "Squidward Tentacles/SK_MP_Squidward_Bandaged.dae"
+squidward-ca   Ca squidward.zip --pick "Squidward Tentacles/SK_MP_Squidward_Bandaged.dae"
+squidward-pp   Pp squidward.zip --pick "Squidward Tentacles/SK_MP_Squidward_Bandaged.dae"
+squidward-kb   Kb squidward.zip --pick "Squidward Tentacles/SK_MP_Squidward_Bandaged.dae"
+squidward-mr   Mr squidward.zip --pick "Squidward Tentacles/SK_MP_Squidward_Bandaged.dae"
+squidward-gn   Gn squidward.zip --pick "Squidward Tentacles/SK_MP_Squidward_Bandaged.dae"
+tailed-monty   Pk tailed-monty.zip --tail yes
+spyro          Ys spyro.zip --rotate 90,0,0 --tail yes
+gusteau        Gn gusteau.zip --style animelee
+kronk          Gn kronk.zip --pick Kronk/kronk_costume_basic.dae --weapon sword=rolling-pin.zip
+kronk-ca       Ca kronk.zip --pick Kronk/kronk_costume_basic.dae
+moe            Ca moe.zip --height 1.2 --move 0.05
+remy           Pk remy.zip --pick Remy/remy_costume_basic.dae --style animelee --tail yes
+rex            Ys rex.zip --pick Rex/rex_costume_basic.dae --arms body --tail yes --move 0.07,0
+mr-incredible  Ca mr-incredible.zip --pick "Mr. Incredible/mr_incredible_costume_basic.dae"
+linguini       Ca linguini.zip
+cartman        Pr cartman.zip
+bmo            Fx bmo.zip --pick "Adventure Time - Card Wars/BMO/BMO_ColladaMax.DAE"
+peggy          Zd peggy.zip --pick "Peggy Hill/P_DRIVER_KH_Peggy.dae"
+peach-dress    Pe peach.zip --pick "Super Mario Odyssey/Peach/Peach.FBX"
+peach-farmer   Pe peach.zip --pick "Super Mario Odyssey/Peach/PeachFarmer.FBX"
