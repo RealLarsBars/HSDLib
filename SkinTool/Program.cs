@@ -779,6 +779,14 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
                 Console.WriteLine(Animelee.AddOutline(obj) ? "animelee: black outline added, flat lighting and colours"
                     : "animelee: flat lighting and colours (the model has its own outline)");
             Console.WriteLine($"model: {obj.Positions.Count} vertices, {obj.Triangles.Count} triangles, {obj.Textures.Count} materials");
+            if (opt.Style == "animelee" && uploads?.Count > 0)
+            {
+                var room = Path.Combine(Path.GetTempPath(), "skintool-outline-" + Guid.NewGuid().ToString("N"));
+                AppDomain.CurrentDomain.ProcessExit += (_, _) => { try { Directory.Delete(room, true); } catch { } };
+                foreach (var (key, upload) in uploads)
+                    if (Animelee.MakeOutlineRoom(upload.Model, room) > 0)
+                        Console.WriteLine($"animelee: the {key}'s textures made room for its outline");
+            }
 
             // fit and weight once against the first costume; every costume shares the skeleton
             var first = new HSDRawFile(dats[0]);
@@ -900,6 +908,10 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
                 builder.WeaponParts = Weapons.Build(root, sk, fighterData, code, uploads);
             }
             builder.Replace(costumeModel, positions, normals, rig.Weights);
+            // the weapons (and Samus's ball, Yoshi's egg) get the look too, each outlined inside its own slot
+            if (opt.Style == "animelee" && builder.WeaponSlots.Count > 0)
+                foreach (var line in AnimeleeDat.Convert(file, builder.WeaponSlots))
+                    builder.Notes.Add("weapons " + line.TrimStart());
 
             var output = Path.Combine(outDir, Path.GetFileName(dat));
             file.Save(output);

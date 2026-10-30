@@ -156,7 +156,10 @@ namespace SkinTool
             }).ToList();
 
             var model = upload.Model;
-            var source = model.Positions;
+            // a model lying at a slant in its file (the cigarette rip lies 45 degrees across) is first turned
+            // to lie along its own longest line, or its box's sides aren't its length and width
+            var level = Level(model);
+            var source = model.Positions.Select(p => Vector3.Transform(p, level)).ToList();
             var (tAxes, tSide, tSkew, tMin, tMax) = Shape(target);
             var (mAxes, mSide, mSkew, mMin, mMax) = Shape(source);
 
@@ -210,7 +213,7 @@ namespace SkinTool
                     foreach (var c in new[] { tri.A, tri.B, tri.C })
                     {
                         var pos = Place(source[c.Position]);
-                        var nrm = c.Normal >= 0 ? model.Normals[c.Normal] : face;
+                        var nrm = c.Normal >= 0 ? Vector3.TransformNormal(model.Normals[c.Normal], level) : face;
                         nrm = Vector3.TransformNormal(nrm, rot);
                         nrm = nrm.LengthSquared() > 1e-12f ? Vector3.Normalize(nrm) : Vector3.UnitY;
                         var uv = c.UV >= 0 ? model.UVs[c.UV] : Vector2.Zero;
@@ -224,6 +227,102 @@ namespace SkinTool
                 }
                 yield return part;
             }
+        }
+
+        /// <summary>
+        /// A turn that lays the model's longest line (its surface's main axis) along a box side, or none when it
+        /// already lies within 10 degrees of one (most models: then the box is already a good fit).
+        /// </summary>
+        static Matrix4x4 Level(ObjModel model)
+        {
+            // the surface's spread, each triangle by its area
+            var p = model.Positions;
+            double total = 0;
+            var mean = Vector3.Zero;
+            var tris = model.Triangles.Select(t => (a: p[t.A.Position], b: p[t.B.Position], c: p[t.C.Position]))
+                .Select(t => (t.a, t.b, t.c, area: Vector3.Cross(t.b - t.a, t.c - t.a).Length() / 2)).Where(t => t.area > 0).ToList();
+            foreach (var t in tris)
+            {
+                mean += (t.a + t.b + t.c) / 3 * t.area;
+                total += t.area;
+            }
+            if (total <= 0)
+                return Matrix4x4.Identity;
+            mean /= (float)total;
+            var cov = new double[3, 3];
+            foreach (var t in tris)
+                foreach (var v in new[] { t.a, t.b, t.c })
+                {
+                    var d = v - mean;
+                    var dv = new double[] { d.X, d.Y, d.Z };
+                    for (int i = 0; i < 3; i++)
+                        for (int j = 0; j < 3; j++)
+                            cov[i, j] += dv[i] * dv[j] * t.area;
+                }
+            var (values, vectors) = Eigen(cov);
+            var order = new[] { 0, 1, 2 }.OrderByDescending(i => values[i]).ToArray();
+            var axis = new Vector3[3];
+            for (int k = 0; k < 3; k++)
+                axis[k] = Vector3.Normalize(new Vector3((float)vectors[0, order[k]], (float)vectors[1, order[k]], (float)vectors[2, order[k]]));
+            var longest = axis[0];
+            if (MathF.Max(MathF.Abs(longest.X), MathF.Max(MathF.Abs(longest.Y), MathF.Abs(longest.Z))) > MathF.Cos(10 * MathF.PI / 180))
+                return Matrix4x4.Identity;
+            // each axis keeps its sign towards the box side it lies nearest, and the three make a turn
+            for (int k = 0; k < 3; k++)
+            {
+                int side = Enumerable.Range(0, 3).OrderByDescending(a => MathF.Abs(Get(axis[k], a))).First();
+                if (Get(axis[k], side) < 0)
+                    axis[k] = -axis[k];
+            }
+            axis[2] = Vector3.Cross(axis[0], axis[1]);
+            // row-vector matrix: axis k goes to x, y, z in turn, then the model is a box along x
+            var m = new Matrix4x4(
+                axis[0].X, axis[1].X, axis[2].X, 0,
+                axis[0].Y, axis[1].Y, axis[2].Y, 0,
+                axis[0].Z, axis[1].Z, axis[2].Z, 0,
+                0, 0, 0, 1);
+            return m;
+        }
+
+        /// <summary>Eigenvalues and eigenvectors (columns) of a symmetric 3x3 matrix, by Jacobi turns.</summary>
+        static (double[] values, double[,] vectors) Eigen(double[,] a)
+        {
+            a = (double[,])a.Clone();
+            var v = new double[3, 3] { { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 } };
+            for (int sweep = 0; sweep < 50; sweep++)
+            {
+                double off = Math.Abs(a[0, 1]) + Math.Abs(a[0, 2]) + Math.Abs(a[1, 2]);
+                if (off < 1e-15 * (Math.Abs(a[0, 0]) + Math.Abs(a[1, 1]) + Math.Abs(a[2, 2]) + 1e-30))
+                    break;
+                for (int p = 0; p < 2; p++)
+                    for (int q = p + 1; q < 3; q++)
+                    {
+                        if (Math.Abs(a[p, q]) < 1e-30)
+                            continue;
+                        double theta = (a[q, q] - a[p, p]) / (2 * a[p, q]);
+                        double t = Math.Sign(theta == 0 ? 1 : theta) / (Math.Abs(theta) + Math.Sqrt(theta * theta + 1));
+                        double c = 1 / Math.Sqrt(t * t + 1), s = t * c;
+                        for (int k = 0; k < 3; k++)
+                        {
+                            double akp = a[k, p], akq = a[k, q];
+                            a[k, p] = c * akp - s * akq;
+                            a[k, q] = s * akp + c * akq;
+                        }
+                        for (int k = 0; k < 3; k++)
+                        {
+                            double apk = a[p, k], aqk = a[q, k];
+                            a[p, k] = c * apk - s * aqk;
+                            a[q, k] = s * apk + c * aqk;
+                        }
+                        for (int k = 0; k < 3; k++)
+                        {
+                            double vkp = v[k, p], vkq = v[k, q];
+                            v[k, p] = c * vkp - s * vkq;
+                            v[k, q] = s * vkp + c * vkq;
+                        }
+                    }
+            }
+            return (new[] { a[0, 0], a[1, 1], a[2, 2] }, v);
         }
 
         /// <summary>

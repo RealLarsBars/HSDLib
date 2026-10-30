@@ -29,7 +29,8 @@ namespace SkinTool
             public Vector2 UV;
         }
 
-        public static List<string> Convert(HSDRawFile file)
+        /// <param name="only">just these mesh slots (a skin's weapons, when the build gave the rest the look already)</param>
+        public static List<string> Convert(HSDRawFile file, ISet<int> only = null)
         {
             var report = new List<string>();
             var root = (HSD_JOBJ)file.Roots[0].Data;
@@ -56,7 +57,7 @@ namespace SkinTool
             for (int s = 0; s < slots.Count; s++)
             {
                 var mobj = slots[s].Dobj.Mobj;
-                if (mobj == null)
+                if (mobj == null || only != null && !only.Contains(s))
                     continue;
                 mobj.RenderFlags = (mobj.RenderFlags & ~(RENDER_MODE.DIFFUSE | RENDER_MODE.SPECULAR)) | RENDER_MODE.CONSTANT;
                 var tobj = mobj.Textures;
@@ -92,6 +93,12 @@ namespace SkinTool
                     var shell = Shell(tris[s], thick, img.Black);
                     if (shell.Count == 0)
                         continue;
+                    // a mesh drawn rigid on a joint of its own (a sword on the hand's weapon joint) gets its
+                    // outline the same way, relative to that joint: no costume of the game's has weights off
+                    // the root joint
+                    int own = slots[s].Joint;
+                    bool rigid = own != 0 && slots[s].Dobj.Pobj.List.All(p => p.EnvelopeWeights == null);
+                    Matrix4x4.Invert(sk.World[own], out var toOwn);
                     var vertices = new List<GX_Vertex>();
                     var bones = new List<HSD_JOBJ[]>();
                     var weights = new List<float[]>();
@@ -99,8 +106,13 @@ namespace SkinTool
                     {
                         var pos = c.Pos;
                         var nrm = c.Nrm;
+                        if (rigid)
+                        {
+                            pos = Vector3.Transform(pos, toOwn);
+                            nrm = Vector3.TransformNormal(nrm, toOwn);
+                        }
                         // single weights are stored relative to their bone, as SkinBuilder does
-                        if (c.Bones.Length == 1)
+                        else if (c.Bones.Length == 1)
                         {
                             var inv = sk.InverseBind(c.Bones[0]);
                             pos = Vector3.Transform(pos, inv);
@@ -113,12 +125,15 @@ namespace SkinTool
                             NRM = new GXVector3(nrm.X, nrm.Y, nrm.Z),
                             TEX0 = new GXVector2(c.UV.X, c.UV.Y),
                         });
+                        if (rigid)
+                            continue;
                         bones.Add(c.Bones.Select(b => sk.Joints[b]).ToArray());
                         weights.Add(c.Weights);
                         enveloped.UnionWith(c.Bones);
                     }
-                    var attrs = new[] { GXAttribName.GX_VA_PNMTXIDX, GXAttribName.GX_VA_POS, GXAttribName.GX_VA_NRM, GXAttribName.GX_VA_TEX0 };
-                    var added = generator.CreatePOBJsFromTriangleList(vertices, attrs, bones, weights);
+                    var added = rigid
+                        ? generator.CreatePOBJsFromTriangleList(vertices, new[] { GXAttribName.GX_VA_POS, GXAttribName.GX_VA_NRM, GXAttribName.GX_VA_TEX0 }, null, null)
+                        : generator.CreatePOBJsFromTriangleList(vertices, new[] { GXAttribName.GX_VA_PNMTXIDX, GXAttribName.GX_VA_POS, GXAttribName.GX_VA_NRM, GXAttribName.GX_VA_TEX0 }, bones, weights);
                     // drawn from one side only, so just its rim shows (as SkinBuilder's outline shells)
                     for (var p = added; p != null; p = p.Next)
                         p.Flags = (p.Flags & ~(POBJ_FLAG.CULLFRONT | POBJ_FLAG.CULLBACK)) | POBJ_FLAG.CULLBACK;
@@ -135,8 +150,9 @@ namespace SkinTool
                     sk.Joints[b].InverseWorldTransform = Skeleton.ToHsd(sk.InverseBind(b));
             root.UpdateFlags();
 
-            report.Add($"animelee: flat lighting on {slots.Count(s => s.Dobj.Mobj != null)} materials, flattened colours in {flattened} textures, outlined {outlined} meshes");
-            int skipped = slots.Select((s, i) => i).Count(i => tris[i].Count > 0 && !images.Values.Any(img => img.Black != null && img.Slots.Contains(i)));
+            var done = Enumerable.Range(0, slots.Count).Where(i => only == null || only.Contains(i)).ToList();
+            report.Add($"animelee: flat lighting on {done.Count(i => slots[i].Dobj.Mobj != null)} materials, flattened colours in {flattened} textures, outlined {outlined} meshes");
+            int skipped = done.Count(i => tris[i].Count > 0 && !images.Values.Any(img => img.Black != null && img.Slots.Contains(i)));
             if (skipped > 0)
                 report.Add($"  {skipped} meshes have no outline (blinking eyes, cut-outs, two textures, or no free spot on their texture)");
             return report;
