@@ -201,6 +201,7 @@ namespace SkinTool
             Smooth(w, adj, boneCount, opt.BodySmoothPasses, i => ModelRegion[i] == Body && belowNeck(i));
 
             // 2b. above the neck everything follows the head alone, blending in over a short band
+            var headShare = new float[n];
             if ((!float.IsNaN(NeckY) || HeadFixed) && HeadBone >= 0)
             {
                 int head = Remap[HeadBone];
@@ -212,6 +213,7 @@ namespace SkinTool
                     float neckY = NeckYAt(Positions[i]);
                     float k = Fixed?[i] is PartKind fixedAs ? (fixedAs == PartKind.Head ? 1 : 0) : SmoothStep(neckY - h * 0.04f, neckY + h * 0.02f, Positions[i].Y);
                     if (k <= 0 || ModelRegion[i] == ArmLeft || ModelRegion[i] == ArmRight) continue;
+                    headShare[i] = k;
                     for (int b = 0; b < boneCount; b++)
                         w[i][b] *= 1 - k;
                     w[i][head] += k;
@@ -238,12 +240,17 @@ namespace SkinTool
             // the points of limb pieces (bendy, not body) touching a body piece
             float reach = (Positions.Max(q => q.Y) - Positions.Min(q => q.Y)) * 0.06f;
             var joins = Enumerable.Range(0, n).Where(i => !BodyPiece[i] && !RigidPart[i] && adj[i].Any(j => BodyPiece[j])).ToList();
+            // a body piece that runs on up into the head (Dale's: neck, face and all one mesh, only the cap and
+            // glasses separate) keeps its head above the neck line: it turns with the head bone like the cap on it,
+            // where moving as one with the chest left the cap turning away from the face in game
+            bool withHead(List<int> members) => members.Count(i => headShare[i] >= 1) * 10 >= members.Count;
             foreach (var group in pieces.GroupBy(aboveNeck))
             {
                 var own = new float[boneCount];
                 foreach (var i in group.SelectMany(m => m))
                     for (int b = 0; b < boneCount; b++)
                         own[b] += w[i][b];
+                var keepHead = new HashSet<int>(group.Key ? Enumerable.Empty<int>() : group.Where(withHead).SelectMany(m => m));
                 if (!group.Key && HeadBone >= 0)
                     own[Remap[HeadBone]] = 0;
                 if (own.Sum() <= 0)
@@ -256,6 +263,8 @@ namespace SkinTool
                 foreach (var i in group.SelectMany(m => m))
                 {
                     float k = joins.Count > 0 ? SmoothStep(0, reach, MathF.Sqrt(joins.Min(j => Vector3.DistanceSquared(Positions[i], Positions[j])))) : 1;
+                    if (keepHead.Contains(i))
+                        k *= 1 - headShare[i];
                     for (int b = 0; b < boneCount; b++)
                         w[i][b] = k * own[b] + (1 - k) * w[i][b];
                 }

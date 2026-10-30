@@ -154,7 +154,9 @@ bone that the fighter's data file switches on and off (`weapons <costume.dat>` l
 body never goes in those slots, and each costume keeps its own weapon unless one is given:
 `--weapon pan=pan.obj` (or a zip) fits the model over the original, its longest side along the
 original's, scaled to the same length, its wide end (a pan's head, a sword's guard) at the original's
-wide end. `--weapon-flip pan` turns it end for end if it comes out backwards. The preview, given
+wide end. A model lying at a slant in its file (the Fallout cigarette lies 45 degrees across) is first
+turned to lie along its own longest line; before, its box was measured across the slant, so it came out
+crooked, too long and off the hand. `--weapon-flip pan` turns it end for end if it comes out backwards. The preview, given
 `--fighter`, adds a row with each weapon in the hand.
 
 **Other shapes.** Samus's morph ball (and her curled-up body), Yoshi's egg and Kirby's stones are
@@ -254,6 +256,12 @@ up, and a part the game hides (a sword in its sheath) takes its outline with it.
 texture animations, two textures, see-through textures or no free patch keep no outline, but still get
 flat lighting. Non-costume files in a zip (portraits) are copied as they are.
 
+A `--style animelee` build does the same to the weapons (and Samus's ball, Yoshi's egg), the costume's own or
+uploaded ones, so they don't stand out as the only lit, unoutlined parts. An uploaded weapon's texture
+usually has no free patch to paint black (the cigarette's covers it all), so its textures double in height
+first, the picture in the top half and black in the bottom. An outline on a mesh drawn rigid on its own joint
+(the sword on the hand's weapon joint) is stored rigid on that joint too, with no weights.
+
 ## Leftover layers and closed eyes
 
 A small part with a plain grey texture lying on another part (the shadow over Peach's eyes) is blended in
@@ -284,7 +292,10 @@ A model made of separate pieces (a shirt with the arms as their own meshes, legs
 keeps them joined: where a point of one piece touches another (within 1% of the model's size), both sides
 take the same weights, and the weights around the join ease into them, so the join can't open in any pose.
 Small details that move as one piece (buttons, claws) and tails are left alone. A body piece keeps its
-shape (BMO's box) unless it carries the arms: a coat with its sleeves bends at the shoulders and elbows. `--attach no` (or
+shape (BMO's box) unless it carries the arms: a coat with its sleeves bends at the shoulders and elbows. A
+body piece that runs on up into the head (Dale Gribble: neck, face and body one mesh, only his cap and glasses
+apart) keeps its head above the neck line on the head bone; moving as one with the chest, the face stayed put
+while the cap on it turned with the head, and in game the cap came off the head. `--attach no` (or
 `attach = no` in skin.txt) turns it off, for loose pieces meant to swing on their own.
 
 ## Tail

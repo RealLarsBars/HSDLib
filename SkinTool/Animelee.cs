@@ -166,6 +166,61 @@ namespace SkinTool
             }
         }
 
+        /// <summary>
+        /// Makes room for an outline inside the model's own textures: each one doubles in height, the
+        /// picture in its top half and the bottom half black, and the model's texture coordinates move into
+        /// the top half. A weapon goes in the game's few weapon slots, one texture each, so its outline can't
+        /// take a material of its own as the body's does; this way the outline can be drawn on the black half
+        /// (see <see cref="AnimeleeDat"/>). Textures repeated over the model (coordinates outside 0 to 1) are
+        /// left as they are, and that part gets no outline. Returns how many textures were changed.
+        /// </summary>
+        public static int MakeOutlineRoom(ObjModel model, string folder)
+        {
+            int changed = 0;
+            var moved = new Dictionary<int, int>();
+            foreach (var group in model.Triangles.Where(t => !t.Outline).GroupBy(t => t.Material).ToList())
+            {
+                var texture = model.TextureOf(group.Key);
+                var corners = group.SelectMany(t => new[] { t.A, t.B, t.C }).Distinct().ToList();
+                if (texture == null || corners.Any(c => c.UV < 0)
+                    || corners.Any(c => model.UVs[c.UV].X < -0.001f || model.UVs[c.UV].X > 1.001f || model.UVs[c.UV].Y < -0.001f || model.UVs[c.UV].Y > 1.001f))
+                    continue;
+                StbImageSharp.ImageResult image;
+                try
+                {
+                    using var stream = File.OpenRead(texture);
+                    image = StbImageSharp.ImageResult.FromStream(stream, StbImageSharp.ColorComponents.RedGreenBlueAlpha);
+                }
+                catch
+                {
+                    continue;
+                }
+                var room = new Bitmap(image.Width, image.Height * 2);
+                Buffer.BlockCopy(image.Data, 0, room.Rgba, 0, image.Data.Length);
+                for (int i = image.Data.Length; i < room.Rgba.Length; i += 4)
+                {
+                    room.Rgba[i] = room.Rgba[i + 1] = room.Rgba[i + 2] = 0;
+                    room.Rgba[i + 3] = 255;
+                }
+                Directory.CreateDirectory(folder);
+                var path = Path.Combine(folder, $"outline-room-{changed}-{Path.GetFileNameWithoutExtension(texture)}.png");
+                room.SavePng(path);
+                model.Textures[group.Key] = path;
+                // v runs up from the bottom of the picture: the old picture is now its top half
+                foreach (var c in corners)
+                {
+                    if (!moved.TryGetValue(c.UV, out int uv))
+                    {
+                        uv = moved[c.UV] = model.UVs.Count;
+                        model.UVs.Add(new Vector2(model.UVs[c.UV].X, 0.5f + model.UVs[c.UV].Y * 0.5f));
+                    }
+                    c.UV = uv;
+                }
+                changed++;
+            }
+            return changed;
+        }
+
         static string BlackTexture(string folder)
         {
             var path = Path.Combine(folder ?? Path.GetTempPath(), "animelee-outline.png");

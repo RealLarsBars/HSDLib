@@ -32,3 +32,5 @@ bmo            Fx bmo.zip --pick "Adventure Time - Card Wars/BMO/BMO_ColladaMax.
 peggy          Zd peggy.zip --pick "Peggy Hill/P_DRIVER_KH_Peggy.dae"
 peach-dress    Pe peach.zip --pick "Super Mario Odyssey/Peach/Peach.FBX"
 peach-farmer   Pe peach.zip --pick "Super Mario Odyssey/Peach/PeachFarmer.FBX"
+dale           Ms dale.zip --pick "Dale Gribble/P_DRIVER_KH_Dale.fbx" --weapon sword=cigarette.zip
+dale-animelee  Ms dale.zip --pick "Dale Gribble/P_DRIVER_KH_Dale.fbx" --weapon sword=cigarette.zip --style animelee
