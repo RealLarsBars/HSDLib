@@ -33,6 +33,9 @@ namespace SkinTool
             // slot -> key; slots not in it keep their first version
             public Dictionary<string, string> Outfit;
 
+            // the kinds of clothing (tops, bottoms) that hide the body under them (see Covered); null: every kind
+            public HashSet<string> HideUnder;
+
             // the look: normal, or animelee (black outline, flat lighting, flat colours)
             public string Style = "normal";
 

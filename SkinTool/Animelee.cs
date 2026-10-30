@@ -56,7 +56,7 @@ namespace SkinTool
             var cutouts = model.Triangles.Select(t => t.Material).Distinct().Where(m => SeeThrough(model.TextureOf(m))).ToHashSet();
             const string material = "animelee outline";
             model.Textures[material] = BlackTexture(model.Directory);
-            var outlined = model.Triangles.Where(t => !cutouts.Contains(t.Material)).ToList();
+            var outlined = model.Triangles.Where(t => !cutouts.Contains(t.Material) && !t.Hidden).ToList();
             // thin parts (glasses frames) get a thinner outline, flat ones none
             var limit = PieceThickness(outlined.Select(t => (model.Positions[t.A.Position], model.Positions[t.B.Position], model.Positions[t.C.Position])).ToList(),
                 outlined.Select(t => (t.A.Position, t.B.Position, t.C.Position)).ToList(),
