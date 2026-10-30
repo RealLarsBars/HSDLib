@@ -16,7 +16,7 @@ namespace SkinTool
                [--fighter <Pl**.dat>] [--bones 41,22,...] [--scale 1.0] [--width 1.0] [--height 1.0] [--rotate 0 | x,y,z] [--move forward[,up]] [--textures <costume.dat>=<folder> ...]
                [--legs auto|separate|body|cut|dress] [--clothes outside|legs] [--arms auto|fighter|body] [--arm-angle auto|40] [--neck auto|none|0.6 [--neck-tilt 0]] [--tail yes|no] [--attach yes|no] [--style normal|animelee] [--eyes <key>] [--outfit <slot>=<key>] [--leg-band 0.3] [--keep-shape]
                [--pick <model in the zip or folder>] [--weapon <name>=<model|zip> [--weapon-pick <name>=<model>] [--weapon-flip <name>] ...]
-               [--preview <out.png> [--anims <Pl**AJ.dat>]] [--overlay <out.png> [--fit-only]] [--parts <out.png>] [--part <point|front:x,y>=<part>[@reach] ...] [--portraits <folder>]
+               [--preview <out.png> [--anims <Pl**AJ.dat>]] [--overlay <out.png> [--fit-only]] [--parts <out.png>] [--parts-mesh <out.bin>] [--part <point|front:x,y>=<part>[@reach] ...] [--portraits <folder>]
 skintool models <zip|folder> --out <folder>
 skintool weapons <costume.dat>
 skintool stretch <costume.dat> <Pl**.dat> <Pl**AJ.dat>
@@ -70,7 +70,8 @@ build    Swaps the model into every costume given, keeping each costume's skelet
          --overlay draws the fitted model over the first costume, to check its size; with --fit-only
          that's all it does (no costumes are written, --out isn't needed).
          --parts draws the part map: the fitted model coloured by the part each point went in (head, body,
-         arms, legs, tail, clothes), framed like --overlay.
+         arms, legs, tail, clothes), framed like --overlay. --parts-mesh writes the same as a 3D mesh (with
+         the fighter's), for a viewer that turns it; a spot picked there is fixed by its point number.
          --part puts a spot of the model in a part by hand, over what was found: a point (as a part fix
          line printed it) or a spot on the overlay or part map (front:x,y, x past 320 is the side view), then
          = body, head, arm, leg or tail, and @reach how far around it along the surface (a share of the
@@ -489,7 +490,7 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
 
         static int Build(string[] args)
         {
-            string model = null, outDir = null, fighterDat = null, previewPng = null, animDat = null, pick = null, overlayPng = null, portraitDir = null, partsPng = null, checkPng = null;
+            string model = null, outDir = null, fighterDat = null, previewPng = null, animDat = null, pick = null, overlayPng = null, portraitDir = null, partsPng = null, partsMesh = null, checkPng = null;
             bool fitOnly = false;
             var weaponFiles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var weaponPicks = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -533,6 +534,7 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
                     case "--overlay": overlayPng = Next(); break;
                     case "--fit-only": fitOnly = true; break;
                     case "--parts": partsPng = Next(); break;
+                    case "--parts-mesh": partsMesh = Next(); break;
                     case "--check-picture": checkPng = Next(); break;
                     case "--part": (opt.PartFixes ??= new()).Add(AutoRig.PartFix.Parse(Next())); break;
                     case "--portraits": portraitDir = Next(); break;
@@ -595,7 +597,7 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
                 }
 
                 ReadRules(model, opt, args.Where(a => a.StartsWith("--")).ToHashSet());
-                BuildCostumes(model, dats, outDir, fighterDat, textureFolders, opt, uploads, overlayPng, fitOnly, animDat, partsPng);
+                BuildCostumes(model, dats, outDir, fighterDat, textureFolders, opt, uploads, overlayPng, fitOnly, animDat, partsPng, partsMesh);
 
                 // the preview, the stretch check and the portraits only read the costumes, so they're drawn
                 // side by side; what they say prints in the same order as before
@@ -781,7 +783,7 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
             return 0;
         }
 
-        static void BuildCostumes(string model, List<string> dats, string outDir, string fighterDat, Dictionary<string, string> textureFolders, AutoRig.Options opt, Dictionary<string, Weapons.Upload> uploads, string overlayPng = null, bool fitOnly = false, string animDat = null, string partsPng = null)
+        static void BuildCostumes(string model, List<string> dats, string outDir, string fighterDat, Dictionary<string, string> textureFolders, AutoRig.Options opt, Dictionary<string, Weapons.Upload> uploads, string overlayPng = null, bool fitOnly = false, string animDat = null, string partsPng = null, string partsMesh = null)
         {
             if (!fitOnly)
                 Directory.CreateDirectory(outDir);
@@ -881,6 +883,8 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
                 Preview.Overlay(dats[0], fighterData, obj, rig.Positions, overlayPng, float.IsNaN(rig.NeckY) ? null : rig.NeckYAt, rig.NeckSlope != 0 ? rig.NeckZ : null);
             if (partsPng != null)
                 Preview.PartMap(dats[0], fighterData, obj, rig.Positions, rig.Labels(), partsPng);
+            if (partsMesh != null)
+                Preview.PartMesh(dats[0], fighterData, obj, rig.Positions, rig.Labels(), partsMesh);
             if (fitOnly)
                 return;
 

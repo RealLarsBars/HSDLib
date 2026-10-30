@@ -1174,6 +1174,57 @@ namespace SkinTool
         }
 
         /// <summary>
+        /// The part map as a mesh, to turn by hand and pick points from (the Make skin panel's Parts view): the
+        /// fighter and the fitted model in the bind pose, in the part map's frame (hips at 8.3 up, facing +Z), all
+        /// little-endian: "SKPM", version 1, then the fighter's triangle count and its corners (3 floats each,
+        /// 3 corners a triangle), then the model's point count, its points (3 floats), each point's part (a byte,
+        /// as <see cref="AutoRig.PartKind"/>), its triangle count and their corners (3 point numbers each).
+        /// </summary>
+        public static void PartMesh(string costume, HSDRaw.Melee.Pl.SBM_FighterData fighter, ObjModel model, Vector3[] positions, AutoRig.PartKind[] labels, string output)
+        {
+            var sk = new Skeleton((HSD_JOBJ)new HSDRawFile(costume).Roots[0].Data);
+            var hidden = fighter != null ? Slots.HiddenByDefault(fighter) : new HashSet<int>();
+            var original = Decode(sk).Where(t => !hidden.Contains(t.Slot)).ToList();
+            var skin = PosedSkinning(sk, new Pose { Name = "bind" });
+            int hip = Math.Min(4, sk.Joints.Count - 1);
+            var hips = Vector3.Transform(sk.Position(hip), skin[hip]);
+            var frame = Matrix4x4.CreateTranslation(-hips.X, -hips.Y + 8.3f, -hips.Z);
+            Vector3 Posed(Vert v)
+            {
+                var p = Vector3.Zero;
+                for (int i = 0; i < v.Bones.Length; i++)
+                    p += Vector3.Transform(v.Pos, skin[v.Bones[i]]) * v.Weights[i];
+                return Vector3.Transform(p, frame);
+            }
+            var tris = model.Triangles.Where(t => !t.Outline).ToList();
+            using var w = new BinaryWriter(File.Create(output));
+            void Write(Vector3 p) { w.Write(p.X); w.Write(p.Y); w.Write(p.Z); }
+            w.Write("SKPM"u8);
+            w.Write(1);
+            w.Write(original.Count);
+            foreach (var t in original)
+            {
+                Write(Posed(t.A));
+                Write(Posed(t.B));
+                Write(Posed(t.C));
+            }
+            // the model is drawn on bone 0 at bind, as the part map draws it
+            w.Write(positions.Length);
+            foreach (var p in positions)
+                Write(Vector3.Transform(Vector3.Transform(p, skin[0]), frame));
+            foreach (var k in labels)
+                w.Write((byte)k);
+            w.Write(tris.Count);
+            foreach (var t in tris)
+            {
+                w.Write(t.A.Position);
+                w.Write(t.B.Position);
+                w.Write(t.C.Position);
+            }
+            Console.WriteLine($"wrote {output}");
+        }
+
+        /// <summary>
         /// The model point under a spot on the size check or the part map (front: x under 320, side: the right
         /// half, or given by <paramref name="view"/>), the nearest one facing the camera; -1 when nothing is near.
         /// </summary>

@@ -333,6 +333,10 @@ fix stays on the same spot when the fit changes. A fix spreads along the surface
 a share of the height) over the points found in the same part as the spot, and wins over everything the
 fit decides. A tail fix turns the tail on.
 
+`--parts-mesh parts.bin` writes the same map as a mesh (the fighter's triangles, then the model's
+points, their parts and triangles; the layout is on `Preview.PartMesh`), so the panel can turn it by
+hand and send the point picked as `--part <point>=<part>`.
+
 ## Checks
 
 Each build with `--anims` runs the stretch check (triangles pulled to more than 4x) and the gap check:
