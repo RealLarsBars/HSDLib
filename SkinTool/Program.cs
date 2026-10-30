@@ -14,7 +14,7 @@ namespace SkinTool
         const string Usage =
 @"skintool build --model <model.obj/.fbx/.dae|model.zip> --dat <costume.dat> [--dat <costume.dat> ...] --out <folder|out.zip>
                [--fighter <Pl**.dat>] [--bones 41,22,...] [--scale 1.0] [--width 1.0] [--height 1.0] [--rotate 0 | x,y,z] [--move forward[,up]] [--textures <costume.dat>=<folder> ...]
-               [--legs auto|separate|body|cut|dress] [--clothes outside|legs] [--arms auto|fighter|body] [--arm-angle auto|40] [--neck auto|none|0.6 [--neck-tilt 0]] [--tail yes|no] [--attach yes|no] [--style normal|animelee] [--eyes <key>] [--outfit <slot>=<key>] [--leg-band 0.3] [--keep-shape]
+               [--legs auto|separate|body|cut|dress] [--clothes outside|legs] [--arms auto|fighter|body] [--arm-angle auto|40] [--neck auto|none|0.6 [--neck-tilt 0]] [--tail yes|no] [--attach yes|no] [--style normal|animelee] [--eyes <key>] [--outfit <slot>=<key>] [--hide-under all|none|tops,bottoms] [--leg-band 0.3] [--keep-shape]
                [--pick <model in the zip or folder>] [--weapon <name>=<model|zip> [--weapon-pick <name>=<model>] [--weapon-flip <name>] ...]
                [--preview <out.png> [--anims <Pl**AJ.dat>]] [--overlay <out.png> [--fit-only]] [--parts <out.png>] [--parts-mesh <out.bin>] [--part <point|front:x,y>=<part>[@reach] ...] [--portraits <folder>]
 skintool models <zip|folder> --out <folder>
@@ -66,6 +66,9 @@ build    Swaps the model into every costume given, keeping each costume's skelet
          --outfit picks one version of a piece of clothing the model carries several of on top of each other
          (an Animal Crossing rip's tops and bottoms, all in one model): slot=key, or several as
          tops=aloha,bottoms=half; all keeps every version. Left out, each slot keeps its first version.
+         --hide-under leaves the body out where clothing covers it, so it can't poke through in a move:
+         all kinds of clothing the model has (the default), none, or some (tops,bottoms). Clothing is told
+         by name, as for --outfit; the fit and weights still use the whole model.
          The same rules can come with the model in a skin.txt next to the OBJ (""legs = body"").
          --overlay draws the fitted model over the first costume, to check its size; with --fit-only
          that's all it does (no costumes are written, --out isn't needed).
@@ -88,7 +91,8 @@ models   Lists the models in a zip or folder and draws each one (<folder>/<n>.pn
          with more than one state of eyes gets a line per state (""eyes <n> <key> default|choice <label>"")
          and a close-up of each (<folder>/<n>-eyes-<key>.png). Clothing in more than one version gets a line
          per version (""outfit <n> <slot> <key> default|choice <label>"") and a close-up of each
-         (<folder>/<n>-outfit-<slot>-<key>.png, also one for all of them as the model has them).
+         (<folder>/<n>-outfit-<slot>-<key>.png, also one for all of them as the model has them). Each kind
+         of clothing --hide-under can take gets a line (""clothing <n> <kind>"").
 weapons  Lists the weapons a fighter holds, by the names --weapon takes.
 stretch  Poses a finished costume in the fighter's moves and warns about parts that get pulled apart
          (build does the same whenever it has --anims and --fighter).
@@ -249,6 +253,15 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
             return v >= -30 && v <= 80 ? v : throw new Exception($"arm-angle must be auto or between -30 and 80 degrees, not {value}");
         }
 
+        // the kinds of clothing that hide the body under them: all (null), none, or a list (tops,bottoms)
+        static HashSet<string> HideUnder(string value)
+        {
+            value = value.Trim().ToLowerInvariant();
+            if (value == "all") return null;
+            if (value == "none") return new HashSet<string>();
+            return value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToHashSet();
+        }
+
         static string Rule(string name, string value, params string[] allowed)
         {
             value = value.Trim().ToLowerInvariant();
@@ -289,12 +302,13 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
                     case "style": opt.Style = Rule(name, value, "normal", "animelee"); break;
                     case "eyes": opt.Eyes = value; break;
                     case "outfit": Outfits.Parse(value, opt.Outfit ??= new()); break;
+                    case "hide-under": opt.HideUnder = HideUnder(value); break;
                     case "leg-band": opt.LegBand = float.Parse(value, CultureInfo.InvariantCulture); break;
                     case "neck": opt.Neck = Neck(value); break;
                     case "neck-tilt": opt.NeckTilt = NeckTilt(value); break;
                     case "tail": opt.HasTail = YesNo("tail", value); break;
                     case "attach": opt.Attach = YesNo("attach", value); break;
-                    default: throw new Exception($"skin.txt: unknown rule {name} (legs, arms, arm-angle, neck, neck-tilt, tail, attach, style, eyes, outfit, scale, width, height, rotate, move, leg-band)");
+                    default: throw new Exception($"skin.txt: unknown rule {name} (legs, arms, arm-angle, neck, neck-tilt, tail, attach, style, eyes, outfit, hide-under, scale, width, height, rotate, move, leg-band)");
                 }
                 Console.WriteLine($"rule from skin.txt: {name} = {value}");
             }
@@ -365,6 +379,8 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
                                 Console.WriteLine($"outfit {i} {slot.Key} {Outfits.All} choice all of them, as the model has them");
                             }
                         }
+                        foreach (var kind in Covered.Kinds(dressed))
+                            Console.WriteLine($"clothing {i} {kind}");
                     }
                     catch (Exception e)
                     {
@@ -530,6 +546,7 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
                     case "--style": opt.Style = Rule("style", Next(), "normal", "animelee"); break;
                     case "--eyes": opt.Eyes = Next(); break;
                     case "--outfit": Outfits.Parse(Next(), opt.Outfit ??= new()); break;
+                    case "--hide-under": opt.HideUnder = HideUnder(Next()); break;
                     case "--pick": pick = Next(); break;
                     case "--overlay": overlayPng = Next(); break;
                     case "--fit-only": fitOnly = true; break;
@@ -804,6 +821,9 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
                 Console.WriteLine($"left out {copy}: two versions of one part drawn together fight and come apart");
             foreach (var layer in ShadeLayers.Remove(obj))
                 Console.WriteLine($"left out {layer}: a grey shading layer over another part, which would cover it");
+            // marked before the outline, which the hidden parts don't get
+            foreach (var line in Covered.Mark(obj, opt.HideUnder))
+                Console.WriteLine(line);
             if (opt.Style == "animelee")
                 Console.WriteLine(Animelee.AddOutline(obj) ? "animelee: black outline added, flat lighting and colours"
                     : "animelee: flat lighting and colours (the model has its own outline)");
@@ -889,8 +909,15 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
                 return;
 
             // the costumes only read the fit, so they're built side by side; what each says prints in order
+            // the skin leaves out what clothing covers; the fit used it all
+            var shown = obj;
+            if (obj.Triangles.Any(t => t.Hidden))
+            {
+                shown = obj.Copy();
+                shown.Triangles.RemoveAll(t => t.Hidden);
+            }
             var said = new List<string>[dats.Count];
-            Each(dats.Count, c => said[c] = BuildCostume(dats[c], dats[0], first, skeleton, rig, obj, outDir, fighterData, textureFolders, opt, uploads));
+            Each(dats.Count, c => said[c] = BuildCostume(dats[c], dats[0], first, skeleton, rig, shown, outDir, fighterData, textureFolders, opt, uploads));
             foreach (var line in said.SelectMany(l => l))
                 Console.WriteLine(line);
         }

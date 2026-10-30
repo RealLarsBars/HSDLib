@@ -45,8 +45,17 @@ namespace SkinTool
         // the kind of clothing a piece's name starts with, after any words naming the character (Nook_Tops_A
         // is tops); null when it names none. Only clothing counts: pieces of a body are often named alike
         // (moe-bodyshape_0 and _1, Moe's face and his eyes) and sit over the same spot without being versions
-        static string KindOf(string name) =>
-            Words(name).Select(w => w.ToLowerInvariant()).FirstOrDefault(Kinds.Contains);
+        internal static string KindOf(string name)
+        {
+            var words = Words(name).Select(w => w.ToLowerInvariant()).ToList();
+            // a piece of the body named for what it goes under (Nook's Body__mCapVis, the top of his head shown
+            // when he has no cap on) isn't clothing
+            if (words.Count > 0 && BodyWords.Contains(words[0]))
+                return null;
+            return words.FirstOrDefault(Kinds.Contains);
+        }
+
+        static readonly string[] BodyWords = { "body", "face", "head", "hair", "skin", "eye", "eyes", "mouth", "hand", "hands", "arm", "arms", "leg", "legs", "foot", "feet", "tail" };
 
         public static List<Slot> Find(ObjModel model)
         {

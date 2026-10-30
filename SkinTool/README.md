@@ -302,6 +302,16 @@ versions can be the same shape in other colours (Nook's two long trousers). `ski
 `outfit <n> <slot> <key> default|choice <label>` and draws `<n>-outfit-<slot>-<key>.png` for each version
 (and `all`), with the other slots at their default.
 
+## Body under clothes
+
+The body under a piece of clothing (Nook's fur under his shirt) bends a little differently from it and pokes
+through in moves. `Covered.Mark` leaves out the triangles clothing covers: from each corner and the middle,
+along the way the triangle faces, a clothing triangle lies within 6% of the model's height. It runs after the
+outfit pick and before the Animelee outline (hidden parts get no outline), and the triangles are only dropped
+after weighting, so the fit doesn't change. Clothing is told by name as for outfits; a name starting with a
+body word (`Body__mCapVis`) isn't clothing. `--hide-under all|none|tops,bottoms` (default all); `models`
+prints `clothing <n> <kind>` for each kind.
+
 ## Pieces that touch
 
 A model made of separate pieces (a shirt with the arms as their own meshes, legs inside a pair of shorts)

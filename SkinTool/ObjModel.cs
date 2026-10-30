@@ -27,6 +27,8 @@ namespace SkinTool
             public string Object;
             // part of a cartoon outline shell: drawn from one side only (see Outlines)
             public bool Outline;
+            // covered by clothes on top of it (see Covered): weighted with the rest, left out of the skin
+            public bool Hidden;
         }
 
         public readonly List<Vector3> Positions = new();
@@ -66,7 +68,7 @@ namespace SkinTool
             copy.Positions.AddRange(Positions);
             copy.UVs.AddRange(UVs);
             copy.Normals.AddRange(Normals);
-            copy.Triangles.AddRange(deep ? Triangles.Select(t => new Triangle { A = t.A, B = t.B, C = t.C, Material = t.Material, Object = t.Object, Outline = t.Outline }) : Triangles);
+            copy.Triangles.AddRange(deep ? Triangles.Select(t => new Triangle { A = t.A, B = t.B, C = t.C, Material = t.Material, Object = t.Object, Outline = t.Outline, Hidden = t.Hidden }) : Triangles);
             copy.Notes.AddRange(Notes);
             return copy;
         }
