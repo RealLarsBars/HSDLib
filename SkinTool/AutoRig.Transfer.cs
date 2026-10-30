@@ -317,6 +317,29 @@ namespace SkinTool
                 // detail on the body: it moves as one piece with its own leg bones, so kicks reach out
                 if (members.Count(i => ModelRegion[i] == LegLeft || ModelRegion[i] == LegRight) * 2 > members.Count)
                 {
+                    // across both legs it's not a foot but a pair of shorts or trousers (Tom Nook's): moved as one
+                    // piece it stays put while the legs inside it kick out of it, so each point moves as the body
+                    // right under it (its own weights, found for the clothes alone, came out ragged). Not a small detail
+                    // sitting between the legs (a buckle), which stays one piece
+                    int left = members.Count(i => ModelRegion[i] == LegLeft), right = members.Count(i => ModelRegion[i] == LegRight);
+                    if (Math.Min(left, right) * 4 > members.Count && members.Count >= n * 0.02f)
+                    {
+                        var inside = body.Where(j => Part[j] != part).ToList();
+                        foreach (var i in members)
+                        {
+                            RigidPart[i] = false;
+                            if (inside.Count == 0)
+                                continue;
+                            var below = new float[boneCount];
+                            foreach (var j in inside.OrderBy(j => Vector3.DistanceSquared(Positions[i], Positions[j])).Take(4))
+                                for (int b = 0; b < boneCount; b++)
+                                    below[b] += w[j][b];
+                            Normalize(below);
+                            w[i] = below;
+                        }
+                        Report += $"part {part}: {members.Count} vertices are clothes over both legs, bend with them\n";
+                        continue;
+                    }
                     var own = new float[boneCount];
                     foreach (var i in members)
                         for (int b = 0; b < boneCount; b++)
