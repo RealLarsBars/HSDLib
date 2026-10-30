@@ -34,3 +34,4 @@ peach-dress    Pe peach.zip --pick "Super Mario Odyssey/Peach/Peach.FBX"
 peach-farmer   Pe peach.zip --pick "Super Mario Odyssey/Peach/PeachFarmer.FBX"
 dale           Ms dale.zip --pick "Dale Gribble/P_DRIVER_KH_Dale.fbx" --weapon sword=cigarette.zip
 dale-animelee  Ms dale.zip --pick "Dale Gribble/P_DRIVER_KH_Dale.fbx" --weapon sword=cigarette.zip --style animelee
+nook           Fx nook.zip --pick "Tom Nook/Tom Nook.dae" --tail yes --outfit tops=rcoyshirth,bottoms=half

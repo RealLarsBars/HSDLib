@@ -29,6 +29,10 @@ namespace SkinTool
             // which of the model's eye states it gets (see Eyes), by key; null: the default ones
             public string Eyes;
 
+            // which version of each piece of clothing the model carries several of gets kept (see Outfits),
+            // slot -> key; slots not in it keep their first version
+            public Dictionary<string, string> Outfit;
+
             // the look: normal, or animelee (black outline, flat lighting, flat colours)
             public string Style = "normal";
 

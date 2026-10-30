@@ -14,7 +14,7 @@ namespace SkinTool
         const string Usage =
 @"skintool build --model <model.obj/.fbx/.dae|model.zip> --dat <costume.dat> [--dat <costume.dat> ...] --out <folder|out.zip>
                [--fighter <Pl**.dat>] [--bones 41,22,...] [--scale 1.0] [--width 1.0] [--height 1.0] [--rotate 0 | x,y,z] [--move forward[,up]] [--textures <costume.dat>=<folder> ...]
-               [--legs auto|separate|body|cut|dress] [--clothes outside|legs] [--arms auto|fighter|body] [--arm-angle auto|40] [--neck auto|none|0.6 [--neck-tilt 0]] [--tail yes|no] [--attach yes|no] [--style normal|animelee] [--eyes <key>] [--leg-band 0.3] [--keep-shape]
+               [--legs auto|separate|body|cut|dress] [--clothes outside|legs] [--arms auto|fighter|body] [--arm-angle auto|40] [--neck auto|none|0.6 [--neck-tilt 0]] [--tail yes|no] [--attach yes|no] [--style normal|animelee] [--eyes <key>] [--outfit <slot>=<key>] [--leg-band 0.3] [--keep-shape]
                [--pick <model in the zip or folder>] [--weapon <name>=<model|zip> [--weapon-pick <name>=<model>] [--weapon-flip <name>] ...]
                [--preview <out.png> [--anims <Pl**AJ.dat>]] [--overlay <out.png> [--fit-only]] [--parts <out.png>] [--part <point|front:x,y>=<part>[@reach] ...] [--portraits <folder>]
 skintool models <zip|folder> --out <folder>
@@ -63,6 +63,9 @@ build    Swaps the model into every costume given, keeping each costume's skelet
          --eyes picks the eyes when the model comes with more than one state of them (open and closed eye
          files beside an Odyssey rip, a numbered set of eye textures, eye meshes per state); models lists
          the keys. Left out, the skin gets the open eyes, or the texture the model's materials name.
+         --outfit picks one version of a piece of clothing the model carries several of on top of each other
+         (an Animal Crossing rip's tops and bottoms, all in one model): slot=key, or several as
+         tops=aloha,bottoms=half; all keeps every version. Left out, each slot keeps its first version.
          The same rules can come with the model in a skin.txt next to the OBJ (""legs = body"").
          --overlay draws the fitted model over the first costume, to check its size; with --fit-only
          that's all it does (no costumes are written, --out isn't needed).
@@ -82,7 +85,9 @@ build    Swaps the model into every costume given, keeping each costume's skelet
          the folder and next to the costumes (needs --fighter and --anims).
 models   Lists the models in a zip or folder and draws each one (<folder>/<n>.png), to pick from. A model
          with more than one state of eyes gets a line per state (""eyes <n> <key> default|choice <label>"")
-         and a close-up of each (<folder>/<n>-eyes-<key>.png).
+         and a close-up of each (<folder>/<n>-eyes-<key>.png). Clothing in more than one version gets a line
+         per version (""outfit <n> <slot> <key> default|choice <label>"") and a close-up of each
+         (<folder>/<n>-outfit-<slot>-<key>.png, also one for all of them as the model has them).
 weapons  Lists the weapons a fighter holds, by the names --weapon takes.
 stretch  Poses a finished costume in the fighter's moves and warns about parts that get pulled apart
          (build does the same whenever it has --anims and --fighter).
@@ -282,12 +287,13 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
                     case "move": Move(opt, value); break;
                     case "style": opt.Style = Rule(name, value, "normal", "animelee"); break;
                     case "eyes": opt.Eyes = value; break;
+                    case "outfit": Outfits.Parse(value, opt.Outfit ??= new()); break;
                     case "leg-band": opt.LegBand = float.Parse(value, CultureInfo.InvariantCulture); break;
                     case "neck": opt.Neck = Neck(value); break;
                     case "neck-tilt": opt.NeckTilt = NeckTilt(value); break;
                     case "tail": opt.HasTail = YesNo("tail", value); break;
                     case "attach": opt.Attach = YesNo("attach", value); break;
-                    default: throw new Exception($"skin.txt: unknown rule {name} (legs, arms, arm-angle, neck, neck-tilt, tail, attach, style, eyes, scale, width, height, rotate, move, leg-band)");
+                    default: throw new Exception($"skin.txt: unknown rule {name} (legs, arms, arm-angle, neck, neck-tilt, tail, attach, style, eyes, outfit, scale, width, height, rotate, move, leg-band)");
                 }
                 Console.WriteLine($"rule from skin.txt: {name} = {value}");
             }
@@ -337,12 +343,26 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
                         var eyes = Eyes.Find(raw, models[i]);
                         var obj = raw.Copy();
                         Eyes.Apply(obj, models[i], null, eyes);
-                        Preview.Thumbnail(obj, Path.Combine(outDir, $"{i}.png"));
+                        // the picture shows what a build gets: one version of each piece of clothing
+                        var outfits = Outfits.Find(obj);
+                        var dressed = obj.Copy();
+                        Outfits.Apply(dressed, null, outfits);
+                        Preview.Thumbnail(dressed, Path.Combine(outDir, $"{i}.png"));
                         Console.WriteLine($"model {i} {obj.Triangles.Count} {name}");
                         if (eyes != null && Eyes.Pictures(raw, models[i], eyes, Path.Combine(outDir, i.ToString())))
                         {
                             foreach (var c in eyes.Choices)
                                 Console.WriteLine($"eyes {i} {c.Key} {(c.Key == eyes.Default ? "default" : "choice")} {c.Label}");
+                        }
+                        if (outfits.Count > 0)
+                        {
+                            Outfits.Pictures(obj, outfits, Path.Combine(outDir, i.ToString()));
+                            foreach (var slot in outfits)
+                            {
+                                foreach (var c in slot.Choices)
+                                    Console.WriteLine($"outfit {i} {slot.Key} {c.Key} {(c.Key == slot.Default ? "default" : "choice")} {c.Label}");
+                                Console.WriteLine($"outfit {i} {slot.Key} {Outfits.All} choice all of them, as the model has them");
+                            }
                         }
                     }
                     catch (Exception e)
@@ -508,6 +528,7 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
                     case "--move": Move(opt, Next()); break;
                     case "--style": opt.Style = Rule("style", Next(), "normal", "animelee"); break;
                     case "--eyes": opt.Eyes = Next(); break;
+                    case "--outfit": Outfits.Parse(Next(), opt.Outfit ??= new()); break;
                     case "--pick": pick = Next(); break;
                     case "--overlay": overlayPng = Next(); break;
                     case "--fit-only": fitOnly = true; break;
@@ -771,6 +792,12 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
                 Console.WriteLine($"closed {holes} small openings (open claw or tooth bases)");
             foreach (var note in obj.Notes)
                 Console.WriteLine(note);
+            // before Duplicates: versions of a piece of clothing can be the same shape in other colours
+            int dressed = obj.Triangles.Count;
+            foreach (var line in Outfits.Apply(obj, opt.Outfit))
+                Console.WriteLine(line);
+            if (obj.Triangles.Count < dressed)
+                obj.DropUnusedPositions();
             foreach (var copy in Duplicates.Remove(obj))
                 Console.WriteLine($"left out {copy}: two versions of one part drawn together fight and come apart");
             foreach (var layer in ShadeLayers.Remove(obj))
