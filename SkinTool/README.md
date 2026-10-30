@@ -319,5 +319,4 @@ worst move, the skin beside the character. `skintool gap` runs it on a finished 
 `tests/cases.txt` (past skins, with the settings they were built with) with both and says which changed.
 Builds are repeatable, so "same" means byte for byte; a changed one gets a picture (rows: old, new, the
 character) and `skintool compare`'s numbers. Run it before every SkinTool change. The models are in the
-project's files (skins/tests/models); Top-8er keeps the smaller ones in test/skins/models for its
-skintool-bump workflow.
+project's files (skins/tests/models).

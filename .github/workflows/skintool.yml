@@ -1,6 +1,6 @@
 # Builds skintool on every push and pull request that touches it, so a change that doesn't compile never
 # reaches Top-8er. The regression run (SkinTool/tests/regress.sh) needs the fighter files and test models,
-# which can't be public; Top-8er's skintool-bump workflow runs it before each version bump.
+# which can't be public, so it's run by hand before each version bump in Top-8er.
 name: skintool
 
 on:
