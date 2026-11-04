@@ -16,9 +16,12 @@ namespace SkinTool
                [--fighter <Pl**.dat>] [--bones 41,22,...] [--scale 1.0] [--width 1.0] [--height 1.0] [--rotate 0 | x,y,z] [--move forward[,up]] [--textures <costume.dat>=<folder> ...]
                [--legs auto|separate|body|cut|dress] [--clothes outside|legs] [--arms auto|fighter|body] [--arm-angle auto|40] [--neck auto|none|0.6 [--neck-tilt 0]] [--tail yes|no] [--attach yes|no] [--style normal|animelee] [--eyes <key>] [--outfit <slot>=<key>] [--hide-under all|none|tops,bottoms] [--leg-band 0.3] [--keep-shape]
                [--pick <model in the zip or folder>] [--weapon <name>=<model|zip> [--weapon-pick <name>=<model>] [--weapon-flip <name>] ...]
+               [--projectile <name>=<model|zip> [--projectile-pick <name>=<model>] [--projectile-flip <name>]] [--projectile-color <name>=#rrggbb] [--projectile-picture <out.png>]
                [--preview <out.png> [--anims <Pl**AJ.dat>]] [--overlay <out.png> [--fit-only]] [--parts <out.png>] [--parts-mesh <out.bin>] [--part <point|front:x,y>=<part>[@reach] ...] [--portraits <folder>]
 skintool models <zip|folder> --out <folder>
 skintool weapons <costume.dat>
+skintool projectiles <Pl**.dat> [--details] [--picture <out.png>]
+skintool projectile <Pl**.dat> <out Pl**.dat> [--projectile <name>=<model|zip> ...] [--projectile-color <name>=#rrggbb ...] [--picture <out.png>]
 skintool stretch <costume.dat> <Pl**.dat> <Pl**AJ.dat>
 skintool gap <costume.dat> <original.dat> <Pl**.dat> <Pl**AJ.dat> [<out.png>]
 skintool compare <out.png> <old.dat> <new.dat> <Pl**.dat> <Pl**AJ.dat> [--original <costume.dat>]
@@ -84,6 +87,10 @@ build    Swaps the model into every costume given, keeping each costume's skelet
          --pick chooses the model when a zip or folder holds more than one.
          --weapon swaps one of the fighter's weapons (pan, sword, hammer; see weapons) for another model,
          fitted over the original; --weapon-flip turns it end for end. Weapons not given keep the costume's own.
+         --projectile swaps one of the fighter's projectiles (Yoshi's egg, Falco's blaster; see projectiles) for
+         another model, and --projectile-color turns one's colour (Fox's laser): both write a changed copy of the
+         fighter's data file (--fighter) next to the costumes, which goes in the game's root folder like them and
+         changes that projectile for every costume. --projectile-picture draws each one before and after.
          --preview renders the first costume, in the fighter's real animations with --anims (needs --fighter).
          --portraits draws a character select portrait of each costume (136x188, <costume>_csp.png) into
          the folder and next to the costumes (needs --fighter and --anims).
@@ -94,6 +101,9 @@ models   Lists the models in a zip or folder and draws each one (<folder>/<n>.pn
          (<folder>/<n>-outfit-<slot>-<key>.png, also one for all of them as the model has them). Each kind
          of clothing --hide-under can take gets a line (""clothing <n> <kind>"").
 weapons  Lists the weapons a fighter holds, by the names --weapon takes.
+projectiles Lists what a fighter throws or fires that has a model of its own, by the names --projectile takes
+         (colour only for glows like the laser); --picture draws them.
+projectile Changes projectiles in a fighter's data file on its own, without a skin.
 stretch  Poses a finished costume in the fighter's moves and warns about parts that get pulled apart
          (build does the same whenever it has --anims and --fighter).
 compare  Draws two builds of a skin (and the original costume, with --original) in the fighter's test
@@ -123,6 +133,8 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
                 switch (args[0])
                 {
                     case "build": return Build(args.Skip(1).ToArray());
+                    case "projectiles": return Projectiles.List(args);
+                    case "projectile": return Projectiles.Run(args);
                     case "inspect": return Inspector.Run(args[1], args.Contains("--textures"));
                     case "preview": return Preview.Run(args);
                     case "export": return Preview.Export(args);
@@ -161,6 +173,8 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
             catch (Exception e)
             {
                 Console.Error.WriteLine($"error: {e.Message}");
+                if (Environment.GetEnvironmentVariable("SKINTOOL_TRACE") == "1")
+                    Console.Error.WriteLine(e);
                 return 2;
             }
         }
@@ -514,12 +528,17 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
             var dats = new List<string>();
             var textureFolders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var opt = new AutoRig.Options();
+            var projectiles = new Projectiles.Options();
+            string projectilePng = null;
 
             for (int i = 0; i < args.Length; i++)
             {
                 string Next() => i + 1 < args.Length ? args[++i] : throw new Exception($"{args[i]} needs a value");
+                if (projectiles.Take(args[i], Next))
+                    continue;
                 switch (args[i])
                 {
+                    case "--projectile-picture": projectilePng = Next(); break;
                     case "--model": model = Next(); break;
                     case "--dat": dats.Add(Next()); break;
                     case "--out": outDir = Next(); break;
@@ -607,6 +626,9 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
                 }
                 if (fighterDat == null && uploads.Count > 0)
                     throw new Exception("--weapon needs --fighter, to find the weapon's slots");
+                if (fighterDat == null && projectiles.Any)
+                    throw new Exception("--projectile needs --fighter: projectiles live in the fighter's data file");
+                var projectileChanges = projectiles.Any ? projectiles.Load(scratch ??= Directory.CreateTempSubdirectory("skintool").FullName) : null;
                 if (outDir.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
                 {
                     zipOut = outDir;
@@ -615,6 +637,10 @@ floor    How far below the floor a costume goes in the fighter's low moves.";
 
                 ReadRules(model, opt, args.Where(a => a.StartsWith("--")).ToHashSet());
                 BuildCostumes(model, dats, outDir, fighterDat, textureFolders, opt, uploads, overlayPng, fitOnly, animDat, partsPng, partsMesh);
+                // projectiles go in a changed copy of the fighter's data file, next to the costumes
+                if (projectileChanges != null && !fitOnly)
+                    foreach (var line in Projectiles.Apply(fighterDat, Path.Combine(outDir, Path.GetFileName(fighterDat)), projectileChanges, projectilePng))
+                        Console.WriteLine(line);
 
                 // the preview, the stretch check and the portraits only read the costumes, so they're drawn
                 // side by side; what they say prints in the same order as before

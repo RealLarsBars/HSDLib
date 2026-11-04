@@ -163,6 +163,25 @@ crooked, too long and off the hand. `--weapon-flip pan` turns it end for end if 
 shapes the game shows instead of the body. A skin keeps the costume's own, so the fighter doesn't
 vanish in down-B.
 
+**Projectiles.** What a fighter throws, fires or brings out (Yoshi's egg, Fox's and Falco's laser and
+blaster, Link's arrows and bombs, Peach's turnips, Mario's fireball) isn't in the costume files: each one
+is an article with its own small model in the fighter's shared data file (PlYs.dat). `projectiles
+PlYs.dat` lists them by name (`--picture` draws each one; others with a model show as `article3`).
+`--projectile egg=cartman.zip` (with `--fighter`) puts a new model where the old one's solid meshes were:
+a long one (a blaster, an arrow) is laid along the old one like a weapon, a round one (an egg) kept upright,
+in both cases as big as the old one. See-through parts (the blaster's muzzle flash) stay. The new model is
+rigid on the old one's main joint, so a projectile that bends (Mario's cape) stops bending. `--projectile-color
+laser=#3080ff` turns one's colour instead: everything coloured in it (vertex colours, materials, textures and
+the textures its animations swap in) takes the new hue, white and grey stay, so the laser keeps its white
+core and the egg its white shell. Glows (the laser, fireballs, PK Fire) only take a colour. The build writes a
+changed copy of the fighter file next to the costumes (it goes in the game's files like them), which changes
+the projectile for every costume of that fighter. It's read back and walked from its roots against the
+original: anything changed outside the projectiles' models and their animations' textures stops the build,
+so the moves, hitboxes and timings stay the game's own (Slippi safe). `--projectile-picture out.png` draws
+each projectile before and after; `projectile PlYs.dat out/PlYs.dat ...` does the same without a skin.
+The glows, trails and sparks around projectiles (the laser's muzzle flash, the shell bits when the egg
+breaks) are drawn by the effect files (EfFxData.dat), which this doesn't change yet.
+
 **Picking and sizing.** A zip or folder may hold several models: `models <zip> --out <folder>`
 lists them with a picture of each (`<n>.png`), and `--pick <path inside>` (`--weapon-pick
 pan=<path>`) chooses one. `--overlay size.png --fit-only` draws the fitted model over the first

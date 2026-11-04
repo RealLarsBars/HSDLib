@@ -233,7 +233,7 @@ namespace SkinTool
         /// A turn that lays the model's longest line (its surface's main axis) along a box side, or none when it
         /// already lies within 10 degrees of one (most models: then the box is already a good fit).
         /// </summary>
-        static Matrix4x4 Level(ObjModel model)
+        internal static Matrix4x4 Level(ObjModel model)
         {
             // the surface's spread, each triangle by its area
             var p = model.Positions;
@@ -329,7 +329,7 @@ namespace SkinTool
         /// The axes from longest to shortest, which end of the longest is wider (+1 the far end), how far
         /// the middle axis leans off centre, and the box.
         /// </summary>
-        static (int[] axes, float side, float skew, Vector3 min, Vector3 max) Shape(IList<Vector3> points)
+        internal static (int[] axes, float side, float skew, Vector3 min, Vector3 max) Shape(IList<Vector3> points)
         {
             var min = new Vector3(float.MaxValue);
             var max = new Vector3(float.MinValue);
@@ -361,10 +361,10 @@ namespace SkinTool
             return (axes, side, skew, min, max);
         }
 
-        static float Get(Vector3 v, int axis) => axis == 0 ? v.X : axis == 1 ? v.Y : v.Z;
+        internal static float Get(Vector3 v, int axis) => axis == 0 ? v.X : axis == 1 ? v.Y : v.Z;
 
         // row-vector matrices: row `from` sends that model axis to the `to` axis
-        static void Set(ref Matrix4x4 m, int from, int to, float sign)
+        internal static void Set(ref Matrix4x4 m, int from, int to, float sign)
         {
             var row = new Vector3(to == 0 ? sign : 0, to == 1 ? sign : 0, to == 2 ? sign : 0);
             switch (from)
