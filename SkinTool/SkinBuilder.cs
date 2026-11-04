@@ -45,7 +45,7 @@ namespace SkinTool
 
         // textures are encoded once and shared by every costume: encoding them is slow
         private record Texture(byte[] Data, int Width, int Height, GXTexFmt Format, bool Alpha);
-        private static readonly ConcurrentDictionary<(string Path, bool Flat), Lazy<Texture>> Encoded = new();
+        private static readonly ConcurrentDictionary<(string Path, bool Flat, int Max), Lazy<Texture>> Encoded = new();
 
         public SkinBuilder(HSDRawFile file, Skeleton skeleton)
         {
@@ -265,7 +265,7 @@ namespace SkinTool
             return slots;
         }
 
-        private static HSD_MOBJ CreateMaterial(string texturePath, Dictionary<string, HSD_TOBJ> cache, bool flat)
+        internal static HSD_MOBJ CreateMaterial(string texturePath, Dictionary<string, HSD_TOBJ> cache, bool flat, int maxSize = 1024)
         {
             var mobj = new HSD_MOBJ()
             {
@@ -289,7 +289,7 @@ namespace SkinTool
 
             if (!cache.TryGetValue(texturePath, out var tobj))
             {
-                tobj = LoadTexture(texturePath, flat);
+                tobj = LoadTexture(texturePath, flat, maxSize);
                 cache[texturePath] = tobj;
             }
             else
@@ -306,9 +306,9 @@ namespace SkinTool
             return mobj;
         }
 
-        private static HSD_TOBJ LoadTexture(string path, bool flat)
+        private static HSD_TOBJ LoadTexture(string path, bool flat, int maxSize = 1024)
         {
-            var texture = Encoded.GetOrAdd((path, flat), key => new Lazy<Texture>(() => Encode(key.Path, key.Flat))).Value;
+            var texture = Encoded.GetOrAdd((path, flat, maxSize), key => new Lazy<Texture>(() => Encode(key.Path, key.Flat, key.Max))).Value;
 
             var tobj = new HSD_TOBJ()
             {
@@ -342,14 +342,14 @@ namespace SkinTool
             return tobj;
         }
 
-        private static Texture Encode(string path, bool flat)
+        private static Texture Encode(string path, bool flat, int maxSize = 1024)
         {
             ImageResult image;
             using (var stream = File.OpenRead(path))
                 image = ImageResult.FromStream(stream, ColorComponents.RedGreenBlueAlpha);
 
             // GX repeat wrapping needs power of two sizes, and the hardware tops out at 1024
-            int w = PowerOfTwo(image.Width), h = PowerOfTwo(image.Height);
+            int w = Math.Min(PowerOfTwo(image.Width), maxSize), h = Math.Min(PowerOfTwo(image.Height), maxSize);
             var rgba = Resize(image.Data, image.Width, image.Height, w, h);
             if (flat)
                 Animelee.Flatten(rgba);
