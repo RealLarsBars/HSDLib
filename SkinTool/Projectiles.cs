@@ -24,7 +24,7 @@ namespace SkinTool
         {
             public string Key, Name;
             public int Article;
-            /// <summary>Whether a new model makes sense (a laser is a glow, so it only takes a colour).</summary>
+            /// <summary>False for a glow (a laser, a fireball): a new model replaces the glow, solid and lit.</summary>
             public bool Model = true;
         }
 
@@ -113,8 +113,6 @@ namespace SkinTool
                     before[p.Article] = Decode(art.Model.RootModelJoint);
                 if (change.Model != null)
                 {
-                    if (!p.Model)
-                        throw new Exception($"the {p.Name.ToLowerInvariant()} is a glow, not a solid model: give it a colour instead");
                     said.AddRange(Replace(art, change.Model, change.Flip, p.Name));
                 }
                 if (change.Colour is Vector3 c)
@@ -167,8 +165,15 @@ namespace SkinTool
                         if (d.Pobj != null)
                             meshes.Add((j, d));
             var solid = meshes.Where(m => !SeeThrough(m.dobj)).ToList();
+            // a glow (the laser: a white core inside fainter and fainter shells) is replaced whole, and the new
+            // model sized to its core, the most solid layer, not the faint haze around it
+            var shape = solid;
             if (solid.Count == 0)
+            {
                 solid = meshes;
+                float most = meshes.Max(m => m.dobj.Mobj?.Material?.Alpha ?? 1);
+                shape = meshes.Where(m => (m.dobj.Mobj?.Material?.Alpha ?? 1) >= most - 0.01f).ToList();
+            }
             if (solid.Count == 0)
                 throw new Exception($"the {name.ToLowerInvariant()} has no mesh to replace");
 
@@ -176,7 +181,7 @@ namespace SkinTool
             int joint = solid.GroupBy(m => m.joint).OrderByDescending(g => g.Sum(m => TriangleCount(m.dobj))).First().Key;
             Matrix4x4.Invert(sk.World[joint], out var toJoint);
             var target = new List<Vector3>();
-            foreach (var (j, d) in solid)
+            foreach (var (j, d) in shape)
                 foreach (var pobj in d.Pobj.List)
                     foreach (var v in Weapons.Triangles(pobj))
                         target.Add(Vector3.Transform(World(sk, pobj, j, v), toJoint));
@@ -809,7 +814,7 @@ namespace SkinTool
             var arts = Articles(data);
             var list = For(BoneMaps.Code(args[1]), data);
             foreach (var p in list)
-                Console.WriteLine($"{p.Key,-10} {p.Name} (article {p.Article}{(p.Model ? "" : ", colour only")})");
+                Console.WriteLine($"{p.Key,-10} {p.Name} (article {p.Article}{(p.Model ? "" : ", a glow")})");
             if (list.Count == 0)
                 Console.WriteLine("no projectiles with a model (what this fighter fires is drawn by its effect file)");
             if (args.Contains("--details"))

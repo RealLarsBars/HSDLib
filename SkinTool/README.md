@@ -173,7 +173,7 @@ in both cases as big as the old one. See-through parts (the blaster's muzzle fla
 rigid on the old one's main joint, so a projectile that bends (Mario's cape) stops bending. `--projectile-color
 laser=#3080ff` turns one's colour instead: everything coloured in it (vertex colours, materials, textures and
 the textures its animations swap in) takes the new hue, white and grey stay, so the laser keeps its white
-core and the egg its white shell. Glows (the laser, fireballs, PK Fire) only take a colour. The build writes a
+core and the egg its white shell. A glow (the laser, fireballs, PK Fire) can take a model too: it replaces the whole glow, solid and lit. The build writes a
 changed copy of the fighter file next to the costumes (it goes in the game's files like them), which changes
 the projectile for every costume of that fighter. It's read back and walked from its roots against the
 original: anything changed outside the projectiles' models and their animations' textures stops the build,
